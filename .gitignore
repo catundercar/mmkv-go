@@ -1,0 +1,27 @@
+# MMKV is cloned per-version by CI (scripts/build_output.sh) — not vendored.
+/MMKV/
+
+# build artifacts & per-version output package
+**/output/
+**/build/
+
+# CI cell results + aggregated report
+/results/
+/all/
+
+# C++ baseline binary
+cpp/bench_cpp
+
+# go
+*.test
+*.out
+# local-dev workspace (breaks `go test ./...` until MMKV/output is built; opt-in)
+go.work
+go.work.sum
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

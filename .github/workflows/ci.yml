@@ -1,0 +1,71 @@
+name: mmkv-tri-test
+
+# 功能门禁（cgo≡purego / 单测 / -race）+ 三方性能（C++/cgo/purego）
+# 矩阵：MMKV 各大版本线最新一版 × {amd64, arm64}，原生 runner（非 QEMU）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *" # 每日性能取样
+  workflow_dispatch:
+    inputs:
+      benchtime:
+        description: "go test -benchtime (e.g. 2s, 5s)"
+        default: "2s"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cell:
+    name: ${{ matrix.version }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false # 跑满矩阵，定位是哪个版本/架构出问题
+      matrix:
+        version: [v1.2.16, v1.3.16, v2.0.2, v2.1.1, v2.2.4, v2.3.0, v2.4.0]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: install toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++ zlib1g-dev
+      - name: run cell (gate + perf)
+        run: bash scripts/run_cell.sh "${{ matrix.version }}" "${{ matrix.arch }}" "${{ github.event.inputs.benchtime || '1s' }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.version }}-${{ matrix.arch }}
+          path: results/
+          if-no-files-found: ignore
+
+  report:
+    name: aggregate report
+    needs: cell
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: all
+          pattern: results-*
+          merge-multiple: true
+      - name: aggregate -> job summary
+        run: python3 scripts/aggregate.py all >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: all-results
+          path: all/
