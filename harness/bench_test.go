@@ -140,7 +140,17 @@ func BenchmarkString_CgoCopy(b *testing.B) {
 	setup(b)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		sinkStr = cgoKV.GetString(keyStr)
+		sinkStr = cgoKV.GetString(keyStr) // C.GoStringN: copies C memory into a Go string
+	}
+}
+
+func BenchmarkString_CgoShared(b *testing.B) {
+	setup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf := cgoKV.GetStringBuffer(keyStr)
+		sinkStr = buf.StringView() // zero-copy string over C memory (no GoStringN copy)
+		buf.Destroy()
 	}
 }
 

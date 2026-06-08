@@ -17,8 +17,15 @@ default** (check-on-read), so every Get includes the change probe (~+1 ns).
 | bytes 4KB | pure copy | 576.4 | 4096 | 1 | 1.35× vs cgo copy |
 | bytes 6B | cgo copy | 154.3 | 16 | 2 | — |
 | bytes 6B | **pure view** | **8.9** | 0 | 0 | **17× faster** |
-| string 38B | cgo copy | 149.2 | 56 | 2 | — |
-| string 38B | **pure** | **24.6** | 48 | 1 | **6.1× faster** |
+| string 38B | cgo copy (GetString) | 148.0 | 56 | 2 | — |
+| string 38B | cgo shared (GetStringBuffer+StringView) | 132.8 | 8 | 1 | — |
+| string 38B | **pure** | **26.4** | 48 | 1 | **5.0× vs cgo shared** |
+
+> The string row is the most instructive: cgo `GetString` copies C→Go (GoStringN);
+> the zero-copy cgo path `GetStringBuffer`+`StringView` avoids that copy yet is
+> still **~5× slower than purego** — which itself copies into a Go string. So the
+> gap is the cgo boundary tax, **not** the copy. (For a 38-byte string the copy is
+> cheap; for large strings cgo shared beats cgo copy by a lot, like bytes 4K.)
 
 > These are local OrbStack numbers. CI numbers on shared runners are noisier and
 > slower in absolute terms — trust the **relative ratios** (see the per-version ×

@@ -76,7 +76,8 @@ GO_ROWS = [
     ("bytes 4K get (copy)", "Bytes4K_CgoCopy", "Bytes4K_PureCopy"),
     ("bytes 4K get (shared/view)", "Bytes4K_CgoShared", "Bytes4K_PureView"),
     ("bytes ~small get", "BytesSmall_CgoCopy", "BytesSmall_PureView"),
-    ("string get", "String_CgoCopy", "String_Pure"),
+    ("string get (cgo copy)", "String_CgoCopy", "String_Pure"),
+    ("string get (cgo view)", "String_CgoShared", "String_Pure"),
 ]
 for arch in archs:
     vers = [c[0] for c in sorted_cells() if c[1] == arch]
