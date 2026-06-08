@@ -154,10 +154,18 @@ func BenchmarkString_CgoShared(b *testing.B) {
 	}
 }
 
-func BenchmarkString_Pure(b *testing.B) {
+func BenchmarkString_PureView(b *testing.B) {
 	setup(b)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		sinkStr, _ = pureR.GetString(keyStr)
+		sinkStr, _ = pureR.GetString(keyStr) // zero-copy unsafe.String view
+	}
+}
+
+func BenchmarkString_PureCopy(b *testing.B) {
+	setup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		sinkStr, _ = pureR.GetStringCopy(keyStr)
 	}
 }

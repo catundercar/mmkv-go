@@ -312,8 +312,24 @@ func (r *Reader) GetBytesCopy(key string) ([]byte, bool) {
 	return out, true
 }
 
-// GetString returns the value as a string.
+// GetString returns the value as a zero-copy string view over the reader's
+// buffer; valid until the next reload/Close, and the underlying bytes must not
+// be mutated (e.g. via a GetBytes alias). The view aliases heap memory and is
+// kept alive by the GC while held. Use GetStringCopy for an independent string
+// (recommended for multi-goroutine live use).
 func (r *Reader) GetString(key string) (string, bool) {
+	v, ok := r.current().bytesValue(key)
+	if !ok {
+		return "", false
+	}
+	if len(v) == 0 {
+		return "", true
+	}
+	return unsafe.String(unsafe.SliceData(v), len(v)), true
+}
+
+// GetStringCopy returns the value as an independent string (a copy).
+func (r *Reader) GetStringCopy(key string) (string, bool) {
 	v, ok := r.current().bytesValue(key)
 	if !ok {
 		return "", false

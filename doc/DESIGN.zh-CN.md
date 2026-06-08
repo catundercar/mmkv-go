@@ -107,9 +107,10 @@ func (r *Reader) Close() error
 func (r *Reader) Keys() []string
 func (r *Reader) Contains(key string) bool
 func (r *Reader) GetBool/GetInt32/GetInt64/GetUInt32/GetUInt64/GetFloat32/GetFloat64(key) (T, bool)
-func (r *Reader) GetString(key string) (string, bool)
-func (r *Reader) GetBytes(key string)     ([]byte, bool) // 内部缓冲视图，下次 reload/Close 前有效，勿改
-func (r *Reader) GetBytesCopy(key string) ([]byte, bool) // 独立副本（live 多 goroutine 推荐）
+func (r *Reader) GetString(key string)     (string, bool) // 零拷贝 unsafe.String 视图，下次 reload/Close 前有效
+func (r *Reader) GetStringCopy(key string) (string, bool) // 独立副本
+func (r *Reader) GetBytes(key string)      ([]byte, bool) // 内部缓冲视图，下次 reload/Close 前有效，勿改
+func (r *Reader) GetBytesCopy(key string)  ([]byte, bool) // 独立副本（live 多 goroutine 推荐）
 
 // namespace（自定义 root）+ 备份
 func OpenNameSpace(rootDir string) NameSpace
@@ -148,7 +149,8 @@ sequence)**（无锁内存读，对齐 MMKV `checkLoadData`：普通 set 改 crc
    与 MMKV 同源同策。唯一 unlink 是 `removeStorage`（且先 `close` 实例）——协调式销毁，读端继续供旧快照
    直到重 `Open`（MMKV 的 live mmap 亦不自动恢复）。
 4. **写仍走 cgo**：含 restore（写操作，写进程用官方 `RestoreOneFromDirectory`）。
-5. **value 视图生命周期**：`GetBytes` 返回内部缓冲视图，下次 reload/`Close` 后失效；live 多 goroutine 用 `GetBytesCopy`。
+5. **value 视图生命周期**：`GetBytes`、`GetString` 都返回基于快照缓冲的零拷贝视图（堆内存，持有期间 GC 保活）；
+   reload 后内容变陈旧、且不可经别名改写。需要独立副本 / live 多 goroutine 时用 `GetBytesCopy` / `GetStringCopy`。
 
 ## 6. 测试（TDD）
 

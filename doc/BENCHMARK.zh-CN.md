@@ -16,14 +16,15 @@ mmkv-go 为**默认透明刷新**（check-on-read），每次 Get 含变更探�
 | bytes 4KB | pure copy | 576.4 | 4096 | 1 | 1.35× vs cgo copy |
 | bytes 6B | cgo copy | 154.3 | 16 | 2 | — |
 | bytes 6B | **pure view** | **8.9** | 0 | 0 | **17× faster** |
-| string 38B | cgo copy (GetString) | 148.0 | 56 | 2 | — |
-| string 38B | cgo shared (GetStringBuffer+StringView) | 132.8 | 8 | 1 | — |
-| string 38B | **pure** | **26.4** | 48 | 1 | **5.0× vs cgo shared** |
+| string 38B | cgo copy (GetString) | 147.1 | 56 | 2 | — |
+| string 38B | cgo view (GetStringBuffer+StringView) | 133.3 | 8 | 1 | — |
+| string 38B | **pure view (GetString, unsafe.String)** | **9.7** | 0 | 0 | **14× vs cgo view** |
+| string 38B | pure copy (GetStringCopy) | 25.8 | 48 | 1 | 5.7× vs cgo copy |
 
-> string 这行最能说明问题：cgo `GetString` 走 C→Go 拷贝（GoStringN）；零拷贝路径
-> `GetStringBuffer`+`StringView` 省掉那次拷贝，但**仍比 purego 慢 ~5×**——而 purego 自己还把数据
-> 拷进了 Go string。所以差距来自 **cgo 边界税，不是那次拷贝**。（38 字节的串拷贝很便宜；串一大，
-> cgo shared 就会像 bytes 4K 那样大幅领先 cgo copy。）
+> 两侧都提供拷贝与零拷贝两种 string 读法。purego `GetString` 是基于 `unsafe.String` 的零拷贝视图
+> （9.7ns、0 alloc）；`GetStringCopy` 是安全副本。cgo `GetString` 走 C→Go 拷贝（GoStringN），
+> `GetStringBuffer`+`StringView` 是其零拷贝路径——但即便如此（133ns）仍**比 purego 视图慢 ~14×**。
+> 差距来自 **cgo 边界税，不是那次拷贝**。
 
 > 这是本地 OrbStack 数字。CI 共享 runner 上噪声更大、绝对值更慢——以**相对比值**为准
 > （见 CI job summary 里的 版本 × 架构 报告）。

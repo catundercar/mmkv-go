@@ -118,9 +118,10 @@ func (r *Reader) Close() error
 func (r *Reader) Keys() []string
 func (r *Reader) Contains(key string) bool
 func (r *Reader) GetBool/GetInt32/GetInt64/GetUInt32/GetUInt64/GetFloat32/GetFloat64(key) (T, bool)
-func (r *Reader) GetString(key string) (string, bool)
-func (r *Reader) GetBytes(key string)     ([]byte, bool) // internal-buffer view, valid until the next reload/Close; do not mutate
-func (r *Reader) GetBytesCopy(key string) ([]byte, bool) // independent copy (recommended for multi-goroutine live use)
+func (r *Reader) GetString(key string)     (string, bool) // zero-copy unsafe.String view, valid until next reload/Close
+func (r *Reader) GetStringCopy(key string) (string, bool) // independent copy
+func (r *Reader) GetBytes(key string)      ([]byte, bool) // internal-buffer view, valid until next reload/Close; do not mutate
+func (r *Reader) GetBytesCopy(key string)  ([]byte, bool) // independent copy (recommended for multi-goroutine live use)
 
 // namespace (custom root) + backup
 func OpenNameSpace(rootDir string) NameSpace
@@ -167,8 +168,9 @@ idle — "every read is automatically up to date" like MMKV C++, but cheaper (MM
    first) — a coordinated teardown; readers keep serving the prior snapshot until they re-`Open` (MMKV's own live
    mmap also does not auto-recover).
 4. **Writes stay on cgo**: including restore (a write operation; the writer uses the official `RestoreOneFromDirectory`).
-5. **Value-view lifetime**: `GetBytes` returns an internal-buffer view that becomes invalid after the next
-   reload/`Close`; for multi-goroutine live use, use `GetBytesCopy`.
+5. **Value-view lifetime**: `GetBytes` and `GetString` return zero-copy views over the snapshot buffer (heap, kept
+   alive by the GC while held); they show stale data after a reload and must not be mutated via an alias. For
+   independent copies / multi-goroutine live use, use `GetBytesCopy` / `GetStringCopy`.
 
 ## 6. Testing (TDD)
 
