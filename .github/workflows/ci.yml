@@ -5,7 +5,9 @@ name: mmkv-tri-test
 on:
   push:
     branches: [main]
+    paths-ignore: ["**/*.md", "doc/**", "LICENSE", ".gitignore"]
   pull_request:
+    paths-ignore: ["**/*.md", "doc/**", "LICENSE", ".gitignore"]
   schedule:
     - cron: "0 3 * * *" # 每日性能取样
   workflow_dispatch:
