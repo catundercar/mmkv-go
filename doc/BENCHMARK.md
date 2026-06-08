@@ -1,53 +1,70 @@
-# mmkv-go 读性能：纯 Go vs cgo（同环境同文件）
+# mmkv-go read performance: pure Go vs cgo (same env, same file)
 
-环境：arm64 Linux 容器（OrbStack），同一个 MMKV 文件，同一进程内分别用官方 cgo 库
-和 mmkv-go 读取。命令：`harness/` 下 `go test -bench . -benchmem`。
-mmkv-go 为**默认透明刷新**（check-on-read），每次 Get 含变更探针（约 +1ns）。
+> **English** · [中文](BENCHMARK.zh-CN.md)
 
-| 读操作 | 方式 | ns/op | B/op | allocs/op | vs cgo |
+Environment: arm64 Linux container (OrbStack), the same MMKV file, read in the
+same process via the official cgo library and via mmkv-go. Command: `go test
+-bench . -benchmem` under `harness/`. mmkv-go uses **transparent refresh by
+default** (check-on-read), so every Get includes the change probe (~+1 ns).
+
+| Read op | Mode | ns/op | B/op | allocs/op | vs cgo |
 |---|---|--:|--:|--:|--:|
 | int32 | cgo | 91.0 | 0 | 0 | — |
 | int32 | **pure** | **8.9** | 0 | 0 | **10.2× faster** |
-| bytes 4KB | cgo copy（不共享） | 776.5 | 4104 | 2 | — |
-| bytes 4KB | cgo shared（零拷贝） | 223.6 | 8 | 1 | — |
-| bytes 4KB | **pure view（零拷贝）** | **10.4** | 0 | 0 | **75× / 21×** |
+| bytes 4KB | cgo copy | 776.5 | 4104 | 2 | — |
+| bytes 4KB | cgo shared (zero-copy) | 223.6 | 8 | 1 | — |
+| bytes 4KB | **pure view (zero-copy)** | **10.4** | 0 | 0 | **75× / 21×** |
 | bytes 4KB | pure copy | 576.4 | 4096 | 1 | 1.35× vs cgo copy |
 | bytes 6B | cgo copy | 154.3 | 16 | 2 | — |
 | bytes 6B | **pure view** | **8.9** | 0 | 0 | **17× faster** |
 | string 38B | cgo copy | 149.2 | 56 | 2 | — |
 | string 38B | **pure** | **24.6** | 48 | 1 | **6.1× faster** |
 
-## 为什么这么快
+> These are local OrbStack numbers. CI numbers on shared runners are noisier and
+> slower in absolute terms — trust the **relative ratios** (see the per-version ×
+> arch report in the CI job summary).
 
-1. **没有 cgo 边界税**（~65ns/次直接消失）。
-2. **parse-once**：`Open()` 时整文件解析进 `map[string][]byte`，之后每次 Get = 无锁快照 + map 查 + 极小解码。
-3. **view 零拷贝**：`GetBytes` 返回指向内部缓冲的子切片，不拷贝 → 4KB 和 6B 都是 ~9–10ns 平的、0 alloc。
-4. **透明刷新近免费**：check-on-read 探针是无锁内存读，约 +1ns/读；仍比 MMKV C++ 便宜（它每次读还要 flock）。
+## Why it's this fast
 
-## 诚实的前提（别误读这张表）
+1. **No cgo boundary tax** (the ~65 ns/call disappears).
+2. **Parse-once**: `Open()` parses the whole file into `map[string][]byte`; afterwards every Get is a lock-free
+   snapshot load + map lookup + tiny decode.
+3. **Zero-copy view**: `GetBytes` returns a sub-slice into the internal buffer — no copy, so 4KB and 6B are both
+   ~9–10 ns and 0 alloc.
+4. **Transparent refresh is nearly free**: the check-on-read probe is a lock-free memory read, ~+1 ns/read; still
+   cheaper than MMKV C++ (which takes a flock on every read).
 
-- **这是"稳态重复读"的数字**。`Open()` 的整文件解析成本（O(文件大小)，一次性）没算进 per-Get。
-  适用：读多写少、长期持有 Reader 反复读。**不适用**：开-读一次-关 的场景（那时摊销不成立）。
-- **view 生命周期**：`GetBytes`/`GetString(底层)` 返回的视图在下次 reload/`Close()` 后失效，
-  且不可改写——与 cgo shared 需 `Destroy()` 是同一类约束。需要独立副本（或 live 多 goroutine）用 `GetBytesCopy`。
-- **string 仍有 1 次分配**（48B）：Go `string` 类型语义上要复制，无法零拷贝；能用 `[]byte` 就用 view。
-- **适用范围**：明文、无过期、只读、单写多读。加密已在接口层解耦（`Decryptor`）但未实现。
-- **写仍走 cgo**：读端**默认 check-on-read 透明加载**写进程的变更（对齐 MMKV C++），无手动 refresh 接口。
+## Honest caveats (don't misread the table)
 
-## 并发正确性（单写多读，已 `-race` 验证）
+- **These are "steady-state repeated read" numbers.** `Open()`'s whole-file parse cost (O(file size), one-time) is
+  not counted in per-Get. Applies to: read-heavy, long-lived Reader doing repeated reads. **Does not apply** to
+  open-read-once-close (amortization doesn't hold there).
+- **View lifetime**: the view returned by `GetBytes` / `GetString` (under the hood) becomes invalid after the next
+  reload/`Close()` and must not be mutated — the same kind of constraint as cgo shared needing `Destroy()`. For an
+  independent copy (or multi-goroutine live use), use `GetBytesCopy`.
+- **String still allocates once** (48B): Go's `string` type requires a copy by semantics, so it can't be zero-copy;
+  use the `[]byte` view when you can.
+- **Scope**: plaintext, no-expire, read-only, single-writer/multi-reader. Encryption is decoupled at the interface
+  (`Decryptor`) but not implemented.
+- **Writes stay on cgo**: readers **load the writer's changes transparently via check-on-read by default** (matching
+  MMKV C++); there is no manual refresh API.
 
-cgo 写进程（`MMKV_MULTI_PROCESS`）狂写 + 纯 Go 读（默认透明刷新，无手动 refresh）：
+## Concurrency correctness (single-writer/multi-reader, `-race` verified)
 
-| reads | CRC错误 | 撕裂(乱码) | 读到最新 |
+A cgo writer (`MMKV_MULTI_PROCESS`) hammering writes + a pure-Go reader (transparent refresh, no manual refresh):
+
+| reads | CRC errors | torn (garbage) | up to date |
 |--:|--:|--:|--:|
 | 472,372 | **0** | **0** | ✓ seq=3000 |
 
-47 万次并发读零撕裂、零 CRC 错误，且读到写进程的最终值。关键是 reload 时取的**共享 flock** 保证一致快照
-——（曾实测：去掉该 flock，百万次并发重读会撞到 CRC 错误，即撕裂读被 CRC 拦下；加上后归零）。见
-`harness/concurrency_test.go`。
+470k concurrent reads with zero torn reads, zero CRC errors, and observing the writer's final value. The key is the
+**shared flock** taken on reload, which guarantees a consistent snapshot — (measured earlier: without that flock, a
+million concurrent re-reads do hit CRC errors, i.e. torn reads caught by CRC; with it, zero). See
+`harness/concurrency_test.go`.
 
-## 结论
+## Conclusion
 
-读路径走纯 Go（方案 F）对**读多写少**场景收益巨大：标量 ~10×、零拷贝 bytes 17–75×、多数读 0 alloc；
-单写多读下**默认透明刷新**（check-on-read）即并发安全、自动加载变更。代价是格式强耦合（版本白名单 +
-CI 差分测试守护）与功能受限（加密/过期/多写进程未覆盖；restore 走 cgo）。
+Going pure Go on the read path (approach F) is a big win for **read-heavy** workloads: scalars ~10×, zero-copy bytes
+17–75×, most reads 0 alloc; and under single-writer/multi-reader, **transparent refresh by default** (check-on-read)
+is concurrency-safe and auto-loads changes. The cost is tight format coupling (guarded by the version allowlist + the
+CI differential test) and limited functionality (encryption / expiration / multi-writer not covered; restore via cgo).

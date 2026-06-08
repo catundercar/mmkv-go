@@ -1,21 +1,25 @@
-# 本地用 Docker 跑全流程测试
+# Running the full test flow locally with Docker
 
-在本地用一个 Linux 容器复现 CI 的整条流程（功能门禁 + 三方性能），无需在宿主机安装
-cmake / g++ / cgo 工具链。容器即 CI runner 的代理。
+> **English** · [中文](LOCAL_DOCKER.zh-CN.md)
 
-## 前置
+Reproduce the entire CI flow (functional gate + three-way performance) locally in
+a Linux container, without installing cmake / g++ / a cgo toolchain on the host.
+The container is a stand-in for the CI runner.
 
-- **Docker**。Apple Silicon 强烈建议 **OrbStack**：`--platform linux/arm64` 是**原生** arm64
-  （不走 QEMU），构建快、性能数字真实。
-- 镜像用 `golang:1.23-bookworm`（自带 `git` / `g++` / `go`）。
-- 容器内还需 `cmake` + `zlib1g-dev`（cmake 构建 MMKV Core；zlib **头文件+库**供 Core 编译与 `-lz` 链接）。
+## Prerequisites
 
-> 说明：`scripts/build_output.sh` 会按 tag **重新编译 Core**，所以必须有 `zlib1g-dev`（头文件）。
-> 只有"用预编译 libcore.a"的场景才可用 `ln -sf libz.so.1 .../libz.so` 绕过 apt——重建 Core 不行。
+- **Docker**. On Apple Silicon, **OrbStack** is strongly recommended: `--platform linux/arm64` is **native** arm64
+  (no QEMU), so builds are fast and the performance numbers are real.
+- Image: `golang:1.23-bookworm` (ships `git` / `g++` / `go`).
+- Also needed in the container: `cmake` + `zlib1g-dev` (cmake builds MMKV Core; zlib provides **both headers and the
+  library** for compiling Core and for `-lz` linking).
 
-## 一、单个 cell（推荐入门）
+> Note: `scripts/build_output.sh` **recompiles Core** per tag, so `zlib1g-dev` (the headers) is required. The
+> `ln -sf libz.so.1 .../libz.so` trick only works when *using a prebuilt* libcore.a — not when rebuilding Core.
 
-跑「某版本 × 某架构」的完整 cell：构建该版本 `output/` → 功能门禁 → 三方性能。
+## 1. A single cell (start here)
+
+Run one full "version × arch" cell: build that version's `output/` → functional gate → three-way performance.
 
 ```sh
 cd ~/project/repos/mmkv-go
@@ -26,15 +30,16 @@ docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-book
 '
 ```
 
-- `run_cell.sh <tag> <arch> [benchtime]`；`<arch>` 仅用于给结果文件命名，真实架构由 `--platform` 决定。
-- 产物：`./results/v2.4.0-arm64.{cpp,go}.txt`（落在宿主机，已 gitignore）。
-- 副作用：会把 MMKV 按 tag clone 到 `./MMKV`（gitignore，可重建）；与 CI 行为一致。
+- `run_cell.sh <tag> <arch> [benchtime]`; `<arch>` only labels the result files — the real arch is set by `--platform`.
+- Output: `./results/v2.4.0-arm64.{cpp,go}.txt` (on the host, gitignored).
+- Side effect: clones MMKV at the tag into `./MMKV` (gitignored, regenerable); same as CI.
 
-门禁任一失败（`cgo≡purego` 不一致 / 单测 / `-race`）→ 脚本非零退出（CI 据此 fail）。性能只出报告、不 fail。
+Any gate failure (`cgo≡purego` mismatch / unit tests / `-race`) makes the script exit non-zero (CI fails on it).
+Performance only reports; it never fails the build.
 
-## 二、全矩阵（多版本，单容器内循环）
+## 2. The full matrix (multiple versions, one container loop)
 
-一个容器里跑完整版本集（arm64 原生）。复用同一个 `./MMKV` clone，逐 tag checkout：
+Run the whole version set in one container (native arm64). The same `./MMKV` clone is reused, checked out per tag:
 
 ```sh
 cd ~/project/repos/mmkv-go
@@ -48,12 +53,13 @@ docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-book
 '
 ```
 
-**amd64**：把上面两处 `arm64` 换成 `amd64`、`--platform linux/amd64`。在 Apple Silicon 上 amd64 走
-**模拟**——功能门禁仍有效，但**性能数字失真，仅供参考**；真实 amd64 性能以 CI 原生 runner 为准。
+**amd64**: replace both `arm64` with `amd64` and `--platform linux/amd64`. On Apple Silicon, amd64 runs under
+**emulation** — the functional gate is still valid, but **the performance numbers are distorted, treat as
+indicative only**; real amd64 performance comes from the native CI runner.
 
-## 三、只验功能门禁（最快）
+## 3. Functional gate only (fastest)
 
-不想跑性能、只想确认某版本 `cgo≡purego`：
+Skip performance, just confirm `cgo≡purego` for a version:
 
 ```sh
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
@@ -64,41 +70,47 @@ docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-book
 '
 ```
 
-纯库单测（无 cgo，秒级）在宿主机直接跑即可：`go test ./...`。
+The pure-Go unit tests (no cgo, sub-second) run directly on the host: `go test ./...`.
 
-## 四、看结果 + 聚合
+## 4. Results + aggregation
 
-结果在宿主机 `./results/`，用宿主机 python3 聚合成 markdown（cgo vs purego、C++ 基线、4KB 三方对照 + 相对比值）：
+Results land in `./results/` on the host. Aggregate into markdown (cgo vs purego, C++ baseline, 4KB three-way +
+relative ratios) with the host's python3:
 
 ```sh
 python3 scripts/aggregate.py results
 ```
 
-（容器内 `golang` 镜像无 python3；要在容器里聚合需先 `apt-get install -y python3`。）
+(The `golang` image has no python3; to aggregate inside the container, `apt-get install -y python3` first.)
 
-## 五、清理
+## 5. Cleanup
 
 ```sh
-rm -rf MMKV results cpp/bench_cpp   # 全部 gitignore，可随时重建
+rm -rf MMKV results cpp/bench_cpp   # all gitignored, regenerable any time
 ```
 
-## 六、故障排查
+## 6. Troubleshooting
 
-- **`cmake: command not found`**：镜像不自带，必须 `apt-get install -y cmake`。
-- **链接报 `cannot find -lz` / Core 编译找不到 `zlib.h`**：缺 `zlib1g-dev`。
-- **apt 偶发卡住**（网络抖动）：重试该 `docker run`；apt 通常可用，无需特殊处理。
-- **首次 `go test`(cgo) 较慢**：第一次会编译 cgo 包 + 链接 `libcore.a/libmmkv.a`，属正常。
-- **不想往仓库里 clone MMKV**：把流程放进容器内 scratch 副本（对宿主机零写入）：
+- **`cmake: command not found`**: not in the image, must `apt-get install -y cmake`.
+- **Link error `cannot find -lz` / Core can't find `zlib.h`**: `zlib1g-dev` is missing.
+- **apt occasionally hangs** (flaky network): retry the `docker run`; apt is usually fine, no special handling needed.
+- **First `go test` (cgo) is slow**: the first run compiles the cgo package + links `libcore.a/libmmkv.a` — normal.
+- **Don't want MMKV cloned into the repo**: run the flow in a container-local scratch copy (zero writes to the host):
   ```sh
   docker run --rm --platform linux/arm64 -v "$PWD":/work golang:1.23-bookworm bash -c '
     apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
     cp -r /work /scratch && cd /scratch && bash scripts/run_cell.sh v2.4.0 arm64 1s
-    cp -r /scratch/results /work/results   # 把结果拷回宿主机
+    cp -r /scratch/results /work/results   # copy results back to the host
   '
   ```
 
-## 与 CI 的关系
+## Relationship to CI
 
-本地 docker ≈ CI runner。CI（`.github/workflows/ci.yml`）在**原生** `ubuntu-latest`(amd64) 与
-`ubuntu-24.04-arm`(arm64) 上 `apt-get install cmake g++ zlib1g-dev` 后直接 `bash scripts/run_cell.sh`
-——runner 一次性，无需 scratch；结果上传 artifact，聚合写入 job summary。本地与 CI 跑的是**同一套脚本**。
+Local Docker ≈ the CI runner. CI (`.github/workflows/ci.yml`) runs on **native** `ubuntu-latest` (amd64) and
+`ubuntu-24.04-arm` (arm64): it `apt-get install`s `cmake g++-12 zlib1g-dev` and then runs `bash scripts/run_cell.sh`
+directly — the runner is single-use, so no scratch is needed; results are uploaded as artifacts and the aggregation
+is written to the job summary. Local and CI run the **same scripts**.
+
+> CI pins **g++-12** rather than the distro default g++-13/14: GCC 13 dropped transitive `<cstdint>` includes, which
+> breaks older MMKV Core (e.g. v1.2.16). g++-12 builds every target version. Locally, `golang:1.23-bookworm` already
+> ships g++-12, so the commands above need no change.
