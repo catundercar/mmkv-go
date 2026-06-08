@@ -41,8 +41,14 @@ jobs:
         with:
           go-version: "1.23"
       - name: install toolchain
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++ zlib1g-dev
+        # g++-12, not the distro default g++-13/14: GCC 13 dropped transitive
+        # <cstdint> includes, which breaks older MMKV Core (e.g. v1.2.16). g++-12
+        # builds every target version (matches MMKV's own gcc:11 build).
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++-12 gcc-12 zlib1g-dev
       - name: run cell (gate + perf)
+        env:
+          CC: gcc-12
+          CXX: g++-12
         run: bash scripts/run_cell.sh "${{ matrix.version }}" "${{ matrix.arch }}" "${{ github.event.inputs.benchtime || '1s' }}"
       - uses: actions/upload-artifact@v4
         if: always()
