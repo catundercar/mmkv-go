@@ -35,8 +35,16 @@ group "gate: pure-Go unit/reader tests"
 go test ./...
 endgroup
 
-group "gate: cgo ≡ purego (version $TAG)"
-( cd harness && go test -run TestCgoEqualsPurego -count=1 ./... )
+group "gate: functional equivalence (cgo ≡ purego, version $TAG)"
+# v2.4.x has the unified MMKVWithIDAndConfig API → also run the encrypted /
+# expiration differential tests (build-tagged mmkvconfig). Older bindings lack
+# that API; their plaintext equivalence still runs (the on-disk crypt/expire
+# format is version-stable, and CFB is checked by the NIST vector unit test).
+EXTRA_TAGS=""
+case "$TAG" in
+v2.4.*) EXTRA_TAGS="-tags mmkvconfig" ;;
+esac
+( cd harness && go test $EXTRA_TAGS -run 'TestCgoEqualsPurego|TestEncrypted|TestExpire' -count=1 ./... )
 endgroup
 
 group "gate: concurrent live-read (-race)"

@@ -17,9 +17,10 @@
 - **并发读**：**默认透明刷新**（对齐 MMKV C++，无手动接口）——mmap `.crc` + check-on-read，变更时对
   `.crc` 加共享 `flock`（与 MMKV 写进程排他锁互锁）reload，保证一致快照。POSIX-only（MMKV 非 Android 用 flock + mmap）。
 - **版本闸门**：`meta.version` 超出已知白名单 → 返回 `ErrUnsupportedVersion`，不硬解。
-- **能力闸门**：过期 flag 置位 → `ErrExpireUnsupported`（MVP 不支持，绝不返回乱码）。
-- **正确性兜底**：CRC32 校验数据区；不匹配 → `ErrCRCMismatch`（也能兜住"误把加密文件当明文读"）。
-- **加密解耦**：通过注入 `Decryptor` 支持；默认 `nil` = 明文。MVP 不内置 AES。
+- **过期**：已解码——每个 value 尾部带 4 字节小端过期时间戳；过期 key（时间戳 ≠0 且 ≤ now）读取视为不存在、
+  并从 `Keys()` 过滤（对齐 MMKV）。
+- **正确性兜底**：CRC32 校验数据区；不匹配 → `ErrCRCMismatch`（也能兜住"用错/没用 key 读加密文件"）。
+- **加密**：内置 AES-CFB-128/256（`WithEncryption(key)`），或注入自定义 `Decryptor`；默认（不传）= 明文。
 
 ## 2. MMKV 磁盘格式（已从 Core 源码确认）
 
@@ -90,14 +91,16 @@ mmkv-go 的 mmap + check-on-read 与此一致，故 normal 写入与 restore 都
 
 ```go
 type Decryptor interface {
-    // Decrypt 把数据区密文整体还原为明文 wire 字节。明文场景注入 nil。
-    Decrypt(ciphertext []byte) (plaintext []byte, err error)
+    // Decrypt 把数据区密文还原为明文 wire 字节。iv 是每个文件的 IV（meta 的 .crc m_vector）——
+    // 因全量回写可能轮换 IV，故每次 reload 传入。
+    Decrypt(ciphertext, iv []byte) (plaintext []byte, err error)
 }
 
 type Reader struct { /* ... */ }
 
 func Open(rootDir, mmapID string, opts ...Option) (*Reader, error) // 默认透明刷新(check-on-read)，POSIX
-func WithDecryptor(d Decryptor) Option
+func WithEncryption(key []byte) Option // AES-CFB-128/256（位宽按 key 长度，对齐 MMKV）
+func WithDecryptor(d Decryptor) Option // 自定义解密器
 
 func (r *Reader) Err() error // 最近一次 reload 的错误（reload 失败则继续供旧快照）；无手动 Refresh
 func (r *Reader) Close() error
@@ -130,12 +133,15 @@ sequence)**（无锁内存读，对齐 MMKV `checkLoadData`：普通 set 改 crc
 - **Phase 2（完成）**：CRC 校验；**默认透明刷新**（mmap + check-on-read + 共享 flock）单写多读安全并发；
   namespace + 特殊字符文件名；纯 Go `BackupOne`。已用 `-race` 并发测试验证
   （cgo MP 写 + 纯 Go 读，~47 万次读零撕裂、读到最新，见 `harness/concurrency_test.go`）。
-- **Phase 3（硬骨头）**：实现 `Decryptor`（AES-CFB，IV 取自 meta，逐字节对齐 `CodedInputDataCrypt`）；过期值布局。
+- **Phase 3（完成）**：加密——内置 AES-CFB-128/256（`WithEncryption`），IV 取自 meta、整段单条 CFB 流、CRC 校验密文；
+  用 NIST CFB 已知向量（宿主机）+ v2.4.0 上的 cgo 差分验证。过期——尾部 4 字节时间戳剥离 + 过滤；
+  v2.4.0 上 cgo 差分（永不/真过期）验证。（加密/过期差分用 v2.4.0 统一配置 binding；格式本身版本稳定。）
 
 ## 5. 风险 / 技术债
 
 1. **格式强耦合**：MMKV 升版可能静默改格式 → 版本白名单 + CI 差分测试守住。
-2. **加密/过期**：未实现，主动闸门拒绝，靠 CRC 兜底防乱码。
+2. **加密/过期**：已实现（AES 位宽按 key 长度推断、对齐 MMKV；过期按宿主机时钟在读取时过滤）。
+   用错/没传 key 会以 `ErrCRCMismatch` 暴露（CRC 校验的是密文）。
 3. **并发**：支持单写多读（写进程须 `MMKV_MULTI_PROCESS`；读进程默认透明刷新）。多写进程不在范围。
    **inode 替换不是问题**：MMKV 故意原地覆盖 live 文件（含 restore，见 [MMKV.cpp:1441](../MMKV/Core/MMKV.cpp)
    注释 + `copyFileContent`），从不换 inode；mmkv-go 的 `.crc` mmap 因此始终有效、check-on-read 照常感知，

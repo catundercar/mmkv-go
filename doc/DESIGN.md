@@ -23,10 +23,12 @@ at the interface level and can be plugged in later.
   check-on-read; on a change it takes a shared `flock` on `.crc` (interlocking with the MMKV writer's exclusive
   lock) and reloads, guaranteeing a consistent snapshot. POSIX-only (MMKV uses flock + mmap on non-Android).
 - **Version gate**: `meta.version` outside the known allowlist → returns `ErrUnsupportedVersion`; never force-decodes.
-- **Capability gate**: expire flag set → `ErrExpireUnsupported` (unsupported in the MVP; never returns garbage).
+- **Key expiration**: decoded — each value carries a trailing 4-byte little-endian expire timestamp; expired keys
+  (timestamp ≠ 0 and ≤ now) read as absent and are filtered from `Keys()` (matches MMKV).
 - **Correctness backstop**: CRC32 over the data region; mismatch → `ErrCRCMismatch` (also catches "an encrypted file
-  mistakenly read as plaintext").
-- **Encryption decoupled**: supported via an injected `Decryptor`; default `nil` = plaintext. No built-in AES in the MVP.
+  read with the wrong/no key").
+- **Encryption**: built-in AES-CFB-128/256 via `WithEncryption(key)`, or a custom injected `Decryptor`;
+  default (no option) = plaintext.
 
 ## 2. MMKV on-disk format (confirmed from Core source)
 
@@ -99,14 +101,17 @@ mmkv-go's mmap + check-on-read follows the same policy, so normal writes and res
 
 ```go
 type Decryptor interface {
-    // Decrypt turns the whole encrypted data region into plaintext wire bytes. Inject nil for plaintext.
-    Decrypt(ciphertext []byte) (plaintext []byte, err error)
+    // Decrypt turns the encrypted data region into plaintext wire bytes. iv is the
+    // per-file IV from the meta (.crc m_vector) — passed each reload since a full
+    // write-back can rotate it.
+    Decrypt(ciphertext, iv []byte) (plaintext []byte, err error)
 }
 
 type Reader struct { /* ... */ }
 
 func Open(rootDir, mmapID string, opts ...Option) (*Reader, error) // transparent refresh (check-on-read) by default, POSIX
-func WithDecryptor(d Decryptor) Option
+func WithEncryption(key []byte) Option // AES-CFB-128/256 (width by key length, like MMKV)
+func WithDecryptor(d Decryptor) Option // custom decryptor
 
 func (r *Reader) Err() error // last reload error (a failed reload keeps serving the prior snapshot); no manual Refresh
 func (r *Reader) Close() error
@@ -144,13 +149,16 @@ idle — "every read is automatically up to date" like MMKV C++, but cheaper (MM
   safe single-writer/multi-reader concurrency; namespace + special-character filenames; pure-Go `BackupOne`. Verified
   with a `-race` concurrency test (cgo MP writer + pure-Go reader, ~470k reads, zero torn reads, always up to date —
   see `harness/concurrency_test.go`).
-- **Phase 3 (the hard part)**: implement `Decryptor` (AES-CFB, IV from meta, byte-aligned with `CodedInputDataCrypt`);
-  expire value layout.
+- **Phase 3 (done)**: encryption — built-in AES-CFB-128/256 (`WithEncryption`), IV from meta, single contiguous CFB
+  stream, CRC over ciphertext; verified by NIST CFB known-answer vectors (host) + a cgo differential on v2.4.0. Key
+  expiration — trailing 4-byte timestamp stripped + filtered; cgo differential (never / actually-expired) on v2.4.0.
+  (The crypt/expire differential uses the v2.4.0 unified-config binding; the format is version-stable.)
 
 ## 5. Risks / tech debt
 
 1. **Tight format coupling**: an MMKV upgrade could silently change the format → guarded by the version allowlist + the CI differential test.
-2. **Encryption / expiration**: not implemented; actively gated out, with CRC as a backstop against garbage.
+2. **Encryption / expiration**: implemented (AES width inferred from key length, matching MMKV; expiration filtered at
+   read against the host clock). Wrong/missing key surfaces as `ErrCRCMismatch` (CRC is over the ciphertext).
 3. **Concurrency**: supports single-writer/multi-reader (writer must use `MMKV_MULTI_PROCESS`; readers refresh
    transparently). Multiple writers are out of scope. **Inode replacement is not an issue**: MMKV deliberately
    overwrites live files in place (including restore, see the [MMKV.cpp:1441](../MMKV/Core/MMKV.cpp) comment +

@@ -1,10 +1,10 @@
-// Package puremmkv is a cgo-free, read-only decoder for MMKV files. It parses
-// the on-disk format directly in Go so the read path never crosses the cgo
-// boundary. Writes are out of scope — keep using the official cgo library for
-// those. See DESIGN.md for the format spec and boundaries.
+// Package mmkv is a cgo-free, read-only decoder for MMKV files. It parses the
+// on-disk format directly in Go so the read path never crosses the cgo boundary.
+// Writes are out of scope — keep using the official cgo library for those.
+// See doc/DESIGN.md for the format spec and boundaries.
 //
-// Scope (Phase 1/2): plaintext, no key-expiration, single-writer/multi-reader.
-// Encryption is decoupled behind the Decryptor interface (inject your own).
+// Scope: plaintext or AES-encrypted (WithEncryption), optional key expiration,
+// read-only, single-writer/multi-reader.
 //
 // Freshness, like MMKV C++: every read is transparently up to date. The reader
 // mmaps ".crc" and, on each read, cheaply compares the writer's change canary
@@ -24,25 +24,18 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
 var (
 	// ErrUnsupportedVersion guards against silent breakage on a future MMKV
 	// on-disk format. Fall back to the cgo library when you see this.
-	ErrUnsupportedVersion = errors.New("puremmkv: unsupported MMKV file version")
-	// ErrExpireUnsupported is returned for files written with key expiration.
-	ErrExpireUnsupported = errors.New("puremmkv: key-expiration files not supported")
+	ErrUnsupportedVersion = errors.New("mmkv: unsupported MMKV file version")
 	// ErrCRCMismatch means the data region failed its CRC32 check — corrupt,
-	// torn write, or (commonly) an encrypted file read without a Decryptor.
-	ErrCRCMismatch = errors.New("puremmkv: CRC mismatch")
+	// torn write, or (commonly) an encrypted file read without (the right) key.
+	ErrCRCMismatch = errors.New("mmkv: CRC mismatch")
 )
-
-// Decryptor turns the on-disk (encrypted) data region into plaintext wire
-// bytes. Inject one via WithDecryptor for encrypted files; nil means plaintext.
-type Decryptor interface {
-	Decrypt(ciphertext []byte) (plaintext []byte, err error)
-}
 
 // snapshot is an immutable parsed view of the file. Readers load it atomically;
 // reloads build a new one and swap the pointer, so concurrent readers always see
@@ -51,6 +44,7 @@ type snapshot struct {
 	meta    *metaInfo
 	backing []byte            // owns the value slices below
 	m       map[string][]byte // key -> value slot blob (views into backing)
+	expire  bool              // values carry a trailing 4-byte expire timestamp
 }
 
 // Reader is a cgo-free read-only view of one MMKV instance.
@@ -76,9 +70,6 @@ type Reader struct {
 // Option configures a Reader.
 type Option func(*Reader)
 
-// WithDecryptor supplies a decryptor for encrypted files.
-func WithDecryptor(d Decryptor) Option { return func(r *Reader) { r.dec = d } }
-
 // Open loads <rootDir>/<encodeFilePath(mmapID)> (+ ".crc") and keeps the reader
 // transparently fresh (check-on-read; see package doc). POSIX-only.
 func Open(rootDir, mmapID string, opts ...Option) (*Reader, error) {
@@ -95,7 +86,7 @@ func Open(rootDir, mmapID string, opts ...Option) (*Reader, error) {
 func (r *Reader) openLive() error {
 	f, err := os.Open(r.metaPath())
 	if err != nil {
-		return fmt.Errorf("puremmkv: open meta: %w", err)
+		return fmt.Errorf("mmkv: open meta: %w", err)
 	}
 	info, err := f.Stat()
 	if err != nil {
@@ -105,7 +96,7 @@ func (r *Reader) openLive() error {
 	mm, err := mmapReadonly(f, int(info.Size()))
 	if err != nil {
 		f.Close()
-		return fmt.Errorf("puremmkv: mmap meta: %w", err)
+		return fmt.Errorf("mmkv: mmap meta: %w", err)
 	}
 	r.crcFile = f
 	r.crcMmap = mm
@@ -147,7 +138,7 @@ func (r *Reader) tupleFresh(crc, actual, seq uint32) bool {
 // .crc (live mode). Caller holds reloadMu.
 func (r *Reader) reloadLocked() error {
 	if err := flockShared(r.crcFile); err != nil {
-		return fmt.Errorf("puremmkv: shared lock: %w", err)
+		return fmt.Errorf("mmkv: shared lock: %w", err)
 	}
 	defer flockUnlock(r.crcFile)
 	return r.reloadFrom(r.crcMmap)
@@ -161,13 +152,10 @@ func (r *Reader) buildSnapshot(metaBuf []byte) (*snapshot, error) {
 	if meta.version > maxSupportedVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnsupportedVersion, meta.version)
 	}
-	if meta.expireEnabled() {
-		return nil, ErrExpireUnsupported
-	}
 
 	data, err := os.ReadFile(r.dataPath())
 	if err != nil {
-		return nil, fmt.Errorf("puremmkv: read data: %w", err)
+		return nil, fmt.Errorf("mmkv: read data: %w", err)
 	}
 
 	var actual uint32
@@ -177,7 +165,7 @@ func (r *Reader) buildSnapshot(metaBuf []byte) (*snapshot, error) {
 		actual = binary.LittleEndian.Uint32(data)
 	}
 	if int(actual)+4 > len(data) {
-		return nil, fmt.Errorf("puremmkv: actualSize %d + 4 > file size %d", actual, len(data))
+		return nil, fmt.Errorf("mmkv: actualSize %d + 4 > file size %d", actual, len(data))
 	}
 	region := data[4 : 4+actual]
 
@@ -187,7 +175,7 @@ func (r *Reader) buildSnapshot(metaBuf []byte) (*snapshot, error) {
 
 	plain := region
 	if r.dec != nil {
-		if plain, err = r.dec.Decrypt(region); err != nil {
+		if plain, err = r.dec.Decrypt(region, meta.iv[:]); err != nil {
 			return nil, err
 		}
 	}
@@ -195,7 +183,12 @@ func (r *Reader) buildSnapshot(metaBuf []byte) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &snapshot{meta: meta, backing: data, m: m}, nil
+	return &snapshot{
+		meta:    meta,
+		backing: data,
+		m:       m,
+		expire:  meta.version >= versionFlag && meta.expireEnabled(),
+	}, nil
 }
 
 // ensureFresh cheaply checks the mmap'd change canary and reloads if a writer
@@ -246,28 +239,51 @@ func (r *Reader) current() *snapshot {
 	return r.snap.Load()
 }
 
-// Keys returns all keys, sorted.
+func nowUnix() uint32 { return uint32(time.Now().Unix()) }
+
+// value returns the value slot for key with the trailing expire timestamp
+// stripped, or ok=false if the key is absent or expired. With expiration off it
+// returns the raw slot. Expire: the last 4 bytes are a little-endian unix-seconds
+// timestamp; 0 = never; expired when != 0 && <= now (matches MMKV).
+func (s *snapshot) value(key string) ([]byte, bool) {
+	v, ok := s.m[key]
+	if !ok {
+		return nil, false
+	}
+	if s.expire && len(v) >= 4 {
+		t := binary.LittleEndian.Uint32(v[len(v)-4:])
+		if t != 0 && t <= nowUnix() {
+			return nil, false // expired
+		}
+		v = v[:len(v)-4]
+	}
+	return v, true
+}
+
+// Keys returns all live (non-expired) keys, sorted.
 func (r *Reader) Keys() []string {
 	s := r.current()
 	keys := make([]string, 0, len(s.m))
 	for k := range s.m {
-		keys = append(keys, k)
+		if _, ok := s.value(k); ok {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	return keys
 }
 
-// Contains reports whether key exists.
+// Contains reports whether key exists and is not expired.
 func (r *Reader) Contains(key string) bool {
-	_, ok := r.current().m[key]
+	_, ok := r.current().value(key)
 	return ok
 }
 
 // bytesValue strips the inner length-delimited layer MMKV wraps around
 // string/[]byte values (the value slot is len-prefixed, and its content is a
 // second len-prefixed field). Scalars are not wrapped this way.
-func bytesValue(s *snapshot, key string) ([]byte, bool) {
-	v, ok := s.m[key]
+func (s *snapshot) bytesValue(key string) ([]byte, bool) {
+	v, ok := s.value(key)
 	if !ok {
 		return nil, false
 	}
@@ -282,12 +298,12 @@ func bytesValue(s *snapshot, key string) ([]byte, bool) {
 // until the next reload/Close. Do not mutate it. Use GetBytesCopy for an
 // independent slice (recommended in live mode).
 func (r *Reader) GetBytes(key string) ([]byte, bool) {
-	return bytesValue(r.current(), key)
+	return r.current().bytesValue(key)
 }
 
 // GetBytesCopy returns an independent copy of the value.
 func (r *Reader) GetBytesCopy(key string) ([]byte, bool) {
-	v, ok := bytesValue(r.current(), key)
+	v, ok := r.current().bytesValue(key)
 	if !ok {
 		return nil, false
 	}
@@ -298,7 +314,7 @@ func (r *Reader) GetBytesCopy(key string) ([]byte, bool) {
 
 // GetString returns the value as a string.
 func (r *Reader) GetString(key string) (string, bool) {
-	v, ok := bytesValue(r.current(), key)
+	v, ok := r.current().bytesValue(key)
 	if !ok {
 		return "", false
 	}
@@ -306,7 +322,7 @@ func (r *Reader) GetString(key string) (string, bool) {
 }
 
 func (r *Reader) GetBool(key string) (bool, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return false, false
 	}
@@ -315,7 +331,7 @@ func (r *Reader) GetBool(key string) (bool, bool) {
 }
 
 func (r *Reader) GetInt32(key string) (int32, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return 0, false
 	}
@@ -324,7 +340,7 @@ func (r *Reader) GetInt32(key string) (int32, bool) {
 }
 
 func (r *Reader) GetInt64(key string) (int64, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return 0, false
 	}
@@ -333,7 +349,7 @@ func (r *Reader) GetInt64(key string) (int64, bool) {
 }
 
 func (r *Reader) GetUInt32(key string) (uint32, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return 0, false
 	}
@@ -342,7 +358,7 @@ func (r *Reader) GetUInt32(key string) (uint32, bool) {
 }
 
 func (r *Reader) GetUInt64(key string) (uint64, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return 0, false
 	}
@@ -351,7 +367,7 @@ func (r *Reader) GetUInt64(key string) (uint64, bool) {
 }
 
 func (r *Reader) GetFloat32(key string) (float32, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return 0, false
 	}
@@ -363,7 +379,7 @@ func (r *Reader) GetFloat32(key string) (float32, bool) {
 }
 
 func (r *Reader) GetFloat64(key string) (float64, bool) {
-	v, ok := r.current().m[key]
+	v, ok := r.current().value(key)
 	if !ok {
 		return 0, false
 	}

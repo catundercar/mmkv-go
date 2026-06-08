@@ -23,7 +23,7 @@ func flockUnlock(f *os.File) {
 // process to the same file pages are visible without a syscall.
 func mmapReadonly(f *os.File, size int) ([]byte, error) {
 	if size < metaSize {
-		return nil, errors.New("puremmkv: .crc smaller than meta struct")
+		return nil, errors.New("mmkv: .crc smaller than meta struct")
 	}
 	return syscall.Mmap(int(f.Fd()), 0, size, syscall.PROT_READ, syscall.MAP_SHARED)
 }

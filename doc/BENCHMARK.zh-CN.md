@@ -36,7 +36,7 @@ mmkv-go 为**默认透明刷新**（check-on-read），每次 Get 含变更探�
 - **view 生命周期**：`GetBytes`/`GetString(底层)` 返回的视图在下次 reload/`Close()` 后失效，
   且不可改写——与 cgo shared 需 `Destroy()` 是同一类约束。需要独立副本（或 live 多 goroutine）用 `GetBytesCopy`。
 - **string 仍有 1 次分配**（48B）：Go `string` 类型语义上要复制，无法零拷贝；能用 `[]byte` 就用 view。
-- **适用范围**：明文、无过期、只读、单写多读。加密已在接口层解耦（`Decryptor`）但未实现。
+- **适用范围**：明文或 AES 加密、可选过期、只读、单写多读。
 - **写仍走 cgo**：读端**默认 check-on-read 透明加载**写进程的变更（对齐 MMKV C++），无手动 refresh 接口。
 
 ## 并发正确性（单写多读，已 `-race` 验证）
@@ -55,4 +55,4 @@ cgo 写进程（`MMKV_MULTI_PROCESS`）狂写 + 纯 Go 读（默认透明刷新�
 
 读路径走纯 Go（方案 F）对**读多写少**场景收益巨大：标量 ~10×、零拷贝 bytes 17–75×、多数读 0 alloc；
 单写多读下**默认透明刷新**（check-on-read）即并发安全、自动加载变更。代价是格式强耦合（版本白名单 +
-CI 差分测试守护）与功能受限（加密/过期/多写进程未覆盖；restore 走 cgo）。
+CI 差分测试守护）与功能受限（多写进程未覆盖；写入/restore 走 cgo）。

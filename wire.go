@@ -18,7 +18,7 @@ func newCodedInput(b []byte) *codedInput { return &codedInput{buf: b} }
 
 func (c *codedInput) atEnd() bool { return c.pos >= len(c.buf) }
 
-var errVarintOverflow = errors.New("puremmkv: varint overflows 64 bits")
+var errVarintOverflow = errors.New("mmkv: varint overflows 64 bits")
 
 // readVarint64 reads a base-128 varint (up to 10 bytes, matching protobuf /
 // MMKV sign-extended encoding for negative 32-bit values).

@@ -9,6 +9,7 @@ of being read-only (writes stay on the official cgo library).
 import "github.com/catundercar/mmkv-go"
 
 r, err := mmkv.Open("/path/to/mmkv/dir", "myID")
+// encrypted: mmkv.Open(dir, id, mmkv.WithEncryption([]byte(cryptKey)))
 if err != nil { /* fall back to the cgo library */ }
 defer r.Close()
 
@@ -24,10 +25,11 @@ multi-reader (pure Go)**.
 
 ## Scope
 
-- **Supported:** plaintext, no key-expiration, read-only, POSIX (Linux/macOS).
-- **Decoupled (not yet implemented):** encryption via the `Decryptor` interface.
-- **Out of scope:** writes, key-expiration, multi-writer. Use the official cgo
-  library for those (including backup *restore*; `BackupOne` here is pure Go).
+- **Supported:** plaintext or AES-encrypted, optional key expiration, read-only, POSIX (Linux/macOS).
+- **Encryption:** AES-CFB-128/256 via `WithEncryption(key)` (width follows key length, like MMKV); or a custom `Decryptor`.
+- **Key expiration:** decoded and filtered transparently (expired keys read as absent).
+- **Out of scope:** writes and multi-writer. Use the official cgo library for
+  those (including backup *restore*; `BackupOne` here is pure Go).
 
 See [doc/DESIGN.md](doc/DESIGN.md) for the on-disk format spec and boundaries,
 and [doc/BENCHMARK.md](doc/BENCHMARK.md) for performance.

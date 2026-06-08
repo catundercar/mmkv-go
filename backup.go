@@ -23,7 +23,7 @@ func BackupOne(rootDir, mmapID, dstDir string) error {
 
 	lf, err := os.Open(src + crcSuffix)
 	if err != nil {
-		return fmt.Errorf("puremmkv: open .crc: %w", err)
+		return fmt.Errorf("mmkv: open .crc: %w", err)
 	}
 	defer lf.Close()
 	if err := flockShared(lf); err != nil {

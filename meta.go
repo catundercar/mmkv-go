@@ -40,7 +40,7 @@ const flagEnableExpire = uint64(1) << 0
 
 func parseMeta(buf []byte) (*metaInfo, error) {
 	if len(buf) < metaSize {
-		return nil, fmt.Errorf("puremmkv: meta too short: %d < %d", len(buf), metaSize)
+		return nil, fmt.Errorf("mmkv: meta too short: %d < %d", len(buf), metaSize)
 	}
 	m := &metaInfo{
 		crcDigest:  binary.LittleEndian.Uint32(buf[offCRC:]),

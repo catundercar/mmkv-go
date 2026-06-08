@@ -44,8 +44,7 @@ default** (check-on-read), so every Get includes the change probe (~+1 ns).
   independent copy (or multi-goroutine live use), use `GetBytesCopy`.
 - **String still allocates once** (48B): Go's `string` type requires a copy by semantics, so it can't be zero-copy;
   use the `[]byte` view when you can.
-- **Scope**: plaintext, no-expire, read-only, single-writer/multi-reader. Encryption is decoupled at the interface
-  (`Decryptor`) but not implemented.
+- **Scope**: plaintext or AES-encrypted, optional key expiration, read-only, single-writer/multi-reader.
 - **Writes stay on cgo**: readers **load the writer's changes transparently via check-on-read by default** (matching
   MMKV C++); there is no manual refresh API.
 
@@ -67,4 +66,4 @@ million concurrent re-reads do hit CRC errors, i.e. torn reads caught by CRC; wi
 Going pure Go on the read path (approach F) is a big win for **read-heavy** workloads: scalars ~10×, zero-copy bytes
 17–75×, most reads 0 alloc; and under single-writer/multi-reader, **transparent refresh by default** (check-on-read)
 is concurrency-safe and auto-loads changes. The cost is tight format coupling (guarded by the version allowlist + the
-CI differential test) and limited functionality (encryption / expiration / multi-writer not covered; restore via cgo).
+CI differential test) and limited functionality (multi-writer not covered; writes/restore via cgo).
