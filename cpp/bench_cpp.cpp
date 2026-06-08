@@ -99,7 +99,7 @@ int main() {
         for (size_t j = 0; j < s; j++) {
             datas[i][j] = static_cast<char>('A' + (j % 26));
         }
-        string_view value(datas[i].data(), s);
+        MMBuffer value((void *)datas[i].data(), s, MMBufferNoCopy);
         kv->set(value, bkeys[i]);
         kv->set(value, skeys[i]);
     }
@@ -107,7 +107,7 @@ int main() {
 
     // ---- int32: isolates the pure call cost (no payload copy) ----
     {
-        const string_view key = "int32";
+        const string key = "int32";
         int32_t counter = 0;
         report("set_int32", 0, benchNs([&] {
             kv->set(counter++, key);
@@ -122,7 +122,7 @@ int main() {
         size_t s = sizes[i];
         const string &bkey = bkeys[i];
         const string &skey = skeys[i];
-        string_view value(datas[i].data(), s);
+        MMBuffer value((void *)datas[i].data(), s, MMBufferNoCopy);
 
         // write (same path serves both cgo variants; report under bytes)
         report("set_bytes", s, benchNs([&] {
