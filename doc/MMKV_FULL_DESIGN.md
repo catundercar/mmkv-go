@@ -98,19 +98,22 @@ version matrix):
   timestamp, meta flag, filter-on-read).
 - **Concurrency**: public `Lock`/`Unlock`/`TryLock`; a pure-Go multi-process test
   (writer + readers as separate processes, zero torn reads).
+- **Containers & migration**: `SetStringSlice`/`GetStringSlice` (vector<string>),
+  `ImportFrom`, `GetValueSize`/`WriteValueToBuffer`.
 - **Ops**: `BackupOne` + pure-Go `RestoreOneFromDirectory`, `NameSpace`,
   `CheckExist`/`IsFileValid`/`RemoveStorage`, `compareBeforeSet`, content-changed
   + recover handlers, read-only mode (`WithReadOnly`).
 
-The read-only `Reader` is kept as the zero-copy, lock-free specialization (the
-benchmark path + the existing cgo-equivalence gate); a single type still covers
-read-only use via `WithReadOnly`. `vector<string>` is **not** implemented — the
-Go cgo binding doesn't expose it, so it can't be differential-tested (the wire
-format is documented above for a future native-C++ check).
+`vector<string>` can't be tested through the Go cgo binding (it doesn't expose
+it), so a C++ Core helper (`cpp/vec_cpp`, linking `libcore.a`) provides a real
+bidirectional differential, gated in CI. The read-only `Reader` is kept as the
+zero-copy, lock-free specialization (the benchmark path + the cgo-equivalence
+gate); a single type still covers read-only use via `WithReadOnly`.
 
 Not yet optimized: encrypted writes always full-rewrite (incremental encrypted
 append is future work); the writer always emits format v4 (cross-version writes
-to a pre-v1.3.0 target would need version targeting).
+to a pre-v1.3.0 target would need version targeting). C++20 numeric vectors
+(`vector<int/float/…>`) are out of scope — the binding doesn't expose them either.
 
 ## 6. Verification (acceptance gates)
 1. **Bidirectional differential** across the 7-version × 2-arch matrix: C++ writes → Go reads (existing `TestCgoEqualsPurego`) **and** Go writes → C++ reads (`TestPuregoWriteCgoReads`), all types/boundaries.
