@@ -59,6 +59,19 @@ cgo 写进程（`MMKV_MULTI_PROCESS`）狂写 + 纯 Go 读（默认透明刷新�
 `harness/concurrency_test.go`。另有**多进程**测试（`harness/multiprocess_test.go`）：cgo 写与纯 Go 读
 分别跑在独立 OS 进程里，真正验证跨进程 flock 互锁。
 
+## 读写 MMKV 类型（读 + 写）
+
+完整可读写 `MMKV` 类型与 Reader、cgo 一并基准（`harness/bench_test.go`；数字见 CI 性能报告的 “cgo vs MMKV” 表）。它的读取走 mutex + map 查（单进程无 flock），比无锁 Reader 略慢，但仍远超 cgo：
+
+- int32 / bytes-view / string-view 读：约 **5–15× 快于 cgo**，view 路径 0 alloc。
+
+写是新增的（此前只基准了 cgo 写）：
+
+- `SetInt32`（append 快路径）：约 **1.5× 快于 cgo**（无 cgo 边界）。
+- `SetBytes` 4 KB：约 **2× 慢于 cgo** —— append 填满一页时，full write-back 把区重建进新缓冲并 msync（MS_SYNC）。增量原地重写为后续优化。
+
+绝对数字以 CI job summary 的 版本 × 架构 表为准。
+
 ## 结论
 
 读路径走纯 Go（方案 F）对**读多写少**场景收益巨大：标量 ~10×、零拷贝 bytes 17–75×、多数读 0 alloc；

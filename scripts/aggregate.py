@@ -140,6 +140,40 @@ for arch in archs:
         w("| " + " | ".join(row_c) + " |")
         w("| " + " | ".join(row_p) + " |")
 
+
+# ---- read+write MMKV type: cgo vs MMKV, per arch (reads + writes) ----
+def render_cmp(title, rows, other_label):
+    for arch in archs:
+        vers = [c[0] for c in sorted_cells() if c[1] == arch]
+        w(f"\n## {title} — {arch}（ns/op；括号=相对 cgo，>1 更快）\n")
+        w("| 操作 | impl | " + " | ".join(vers) + " |")
+        w("|---|---|" + "|".join(["--:"] * len(vers)) + "|")
+        for label, cgo_n, other_n in rows:
+            row_c = [label, "cgo"]
+            row_o = ["", other_label]
+            for v in vers:
+                g = go.get((v, arch), {})
+                c = g.get(cgo_n, (None,))[0]
+                o = g.get(other_n, (None,))[0]
+                row_c.append(fmt(c))
+                rel = f" ({c / o:.1f}×)" if (c and o) else ""
+                row_o.append(fmt(o) + rel)
+            w("| " + " | ".join(row_c) + " |")
+            w("| " + " | ".join(row_o) + " |")
+
+
+MMKV_READ_ROWS = [
+    ("int32 get", "Int32_Cgo", "Int32_MMKV"),
+    ("bytes 4K view", "Bytes4K_CgoShared", "Bytes4K_MMKVView"),
+    ("string view", "String_CgoShared", "String_MMKVView"),
+]
+WRITE_ROWS = [
+    ("set int32", "SetInt32_Cgo", "SetInt32_MMKV"),
+    ("set bytes 4K", "SetBytes4K_Cgo", "SetBytes4K_MMKV"),
+]
+render_cmp("Go reads: cgo vs MMKV (read+write type)", MMKV_READ_ROWS, "mmkv")
+render_cmp("Go writes: cgo vs MMKV (read+write type)", WRITE_ROWS, "mmkv")
+
 # ---- C++ Core baseline across versions, per arch ----
 CPP_OPS = ["get_bytes_copy", "get_bytes_shared", "set_bytes"]
 SIZES = [16, 256, 4096, 65536, 1048576]

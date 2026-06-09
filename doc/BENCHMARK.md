@@ -70,6 +70,25 @@ million concurrent re-reads do hit CRC errors, i.e. torn reads caught by CRC; wi
 `harness/concurrency_test.go`. A separate **multi-process** test (`harness/multiprocess_test.go`) runs the cgo
 writer and the pure-Go readers as distinct OS processes, exercising the cross-process flock interlock for real.
 
+## Read+write MMKV type (reads and writes)
+
+The full read+write `MMKV` type is benchmarked next to the Reader and cgo
+(`harness/bench_test.go`; numbers in the CI perf report's "cgo vs MMKV" tables).
+Its reads take a mutex + map lookup (no flock in single-process), so they are a
+touch slower than the lock-free Reader but still far ahead of cgo:
+
+- int32 / bytes-view / string-view reads: roughly **5–15× faster than cgo**, 0
+  alloc on the view paths.
+
+Writes are new — the project previously benchmarked cgo writes only:
+
+- `SetInt32` (append fast path): about **1.5× faster than cgo** (no cgo boundary).
+- `SetBytes` 4 KB: about **2× slower than cgo** — when an append fills the page,
+  the full write-back rebuilds the region into a fresh buffer and msyncs
+  (MS_SYNC). Incremental in-place rewrite is a future optimization.
+
+Trust the CI job summary's per-version × arch tables for absolute numbers.
+
 ## Conclusion
 
 Going pure Go on the read path (approach F) is a big win for **read-heavy** workloads: scalars ~10×, zero-copy bytes

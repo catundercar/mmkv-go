@@ -28,6 +28,7 @@ var (
 	once   sync.Once
 	cgoKV  cgommkv.MMKV
 	pureR  *mmkv.Reader
+	pureKV *mmkv.MMKV // read+write type, opened single-process, reading the same fixture
 	bigVal []byte
 )
 
@@ -52,6 +53,36 @@ func setup(tb testing.TB) {
 		if err != nil {
 			tb.Fatalf("mmkv.Open: %v", err)
 		}
+		pureKV, err = mmkv.MMKVWithID(dir, mmapID)
+		if err != nil {
+			tb.Fatalf("mmkv.MMKVWithID: %v", err)
+		}
+	})
+}
+
+// write-bench instances (separate IDs so the read fixture stays static).
+var (
+	writeOnce sync.Once
+	cgoWKV    cgommkv.MMKV
+	pureWKV   *mmkv.MMKV
+)
+
+func writeSetup(tb testing.TB) {
+	setup(tb) // ensures bigVal + the shared init dir
+	writeOnce.Do(func() {
+		dir := ensureInit(tb)
+		cgoWKV = cgommkv.MMKVWithID("benchwrite_cgo")
+		cgoWKV.ClearAll()
+		cgoWKV.SetInt32(0, keyI32)
+		cgoWKV.Sync(true)
+		var err error
+		pureWKV, err = mmkv.MMKVWithID(dir, "benchwrite_pure")
+		if err != nil {
+			tb.Fatalf("mmkv.MMKVWithID(write): %v", err)
+		}
+		_ = pureWKV.ClearAll()
+		_ = pureWKV.SetInt32(keyI32, 0)
+		_ = pureWKV.Sync()
 	})
 }
 
@@ -167,5 +198,65 @@ func BenchmarkString_PureCopy(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		sinkStr, _ = pureR.GetStringCopy(keyStr)
+	}
+}
+
+// ---- read+write MMKV type, reads (single-process: mutex + map, no flock) ----
+
+func BenchmarkInt32_MMKV(b *testing.B) {
+	setup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		sinkI32, _ = pureKV.GetInt32(keyI32)
+	}
+}
+
+func BenchmarkBytes4K_MMKVView(b *testing.B) {
+	setup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		sinkBytes, _ = pureKV.GetBytes(keyBig)
+	}
+}
+
+func BenchmarkString_MMKVView(b *testing.B) {
+	setup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		sinkStr, _ = pureKV.GetString(keyStr)
+	}
+}
+
+// ---- writes: cgo vs pure-Go MMKV (append fast path + periodic full write-back) ----
+
+func BenchmarkSetInt32_Cgo(b *testing.B) {
+	writeSetup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		cgoWKV.SetInt32(int32(i), keyI32)
+	}
+}
+
+func BenchmarkSetInt32_MMKV(b *testing.B) {
+	writeSetup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = pureWKV.SetInt32(keyI32, int32(i))
+	}
+}
+
+func BenchmarkSetBytes4K_Cgo(b *testing.B) {
+	writeSetup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		cgoWKV.SetBytes(bigVal, keyBig)
+	}
+}
+
+func BenchmarkSetBytes4K_MMKV(b *testing.B) {
+	writeSetup(b)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = pureWKV.SetBytes(keyBig, bigVal)
 	}
 }
