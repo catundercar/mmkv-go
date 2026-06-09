@@ -1,0 +1,26 @@
+name: mmkv-release-watch
+
+# Daily: if Tencent/MMKV publishes a release not yet in our CI matrix, open a
+# compatibility-tracking issue (deduplicated). Manual run via workflow_dispatch.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: mmkv-release-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check for a new MMKV release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/check_mmkv_release.sh
