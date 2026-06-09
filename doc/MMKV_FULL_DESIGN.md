@@ -104,11 +104,11 @@ version matrix):
   `CheckExist`/`IsFileValid`/`RemoveStorage`, `compareBeforeSet`, content-changed
   + recover handlers, read-only mode (`WithReadOnly`).
 
-`vector<string>` can't be tested through the Go cgo binding (it doesn't expose
-it), so a C++ Core helper (`cpp/vec_cpp`, linking `libcore.a`) provides a real
-bidirectional differential, gated in CI. The read-only `Reader` is kept as the
-zero-copy, lock-free specialization (the benchmark path + the cgo-equivalence
-gate); a single type still covers read-only use via `WithReadOnly`.
+`vector<string>` isn't exposed by the Go cgo binding, so it has Go unit tests
+only (round-trip + spec byte-layout) and no cgo differential. The read-only
+`Reader` is kept as the zero-copy, lock-free specialization (the benchmark path +
+the cgo-equivalence gate); a single type still covers read-only use via
+`WithReadOnly`.
 
 Not yet optimized: encrypted writes always full-rewrite (incremental encrypted
 append is future work); the writer always emits format v4 (cross-version writes

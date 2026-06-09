@@ -90,7 +90,7 @@ func NameSpace(rootDir string) NS; BackupOneToDirectory(...) / RestoreOneFromDir
 - **容器与迁移**:`SetStringSlice`/`GetStringSlice`(vector<string>)、`ImportFrom`、`GetValueSize`/`WriteValueToBuffer`。
 - **运维**:`BackupOne` + 纯 Go `RestoreOneFromDirectory`、`NameSpace`、`CheckExist`/`IsFileValid`/`RemoveStorage`、`compareBeforeSet`、content-changed + recover handler、只读模式(`WithReadOnly`)。
 
-`vector<string>` 无法经 Go cgo binding 测(它不暴露),故用 C++ Core 辅助程序(`cpp/vec_cpp`,直链 `libcore.a`)做真正的双向差分,已接入 CI。只读 `Reader` 保留为零拷贝、无锁特化(基准路径 + cgo 等价 gate);单一类型通过 `WithReadOnly` 也能覆盖只读。
+`vector<string>` Go cgo binding 不暴露,故只做 Go 单元测试(往返 + 线格式断言),不做 cgo 差分。只读 `Reader` 保留为零拷贝、无锁特化(基准路径 + cgo 等价 gate);单一类型通过 `WithReadOnly` 也能覆盖只读。
 
 尚未优化:加密写每次全量重写(增量加密 append 为后续);writer 始终写 format v4(向 v1.3.0 之前的目标写需要版本目标化)。C++20 数值 vector(`vector<int/float/…>`)不在范围(binding 也不暴露)。
 
