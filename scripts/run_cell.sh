@@ -40,15 +40,28 @@ gatepass unit
 endgroup
 
 group "gate: functional equivalence (cgo ≡ purego, version $TAG)"
+# Base (all versions): C++ writes → both the read-only Reader and the read+write
+# MMKV read back identically.
+RUN='TestCgoEqualsPurego|TestCgoWriteMMKVReads'
+# Go writes → C++ reads: the writer emits on-disk format version 4 (Flag), which
+# MMKV reads from v1.3.0 on, so gate these off the pre-Flag v1.2.x line.
+case "$TAG" in
+v1.2.*) ;;
+*) RUN="$RUN|TestPuregoWriteCgoReads|TestMMKVWriteCgoReads" ;;
+esac
 # v2.4.x has the unified MMKVWithIDAndConfig API → also run the encrypted /
-# expiration differential tests (build-tagged mmkvconfig). Older bindings lack
-# that API; their plaintext equivalence still runs (the on-disk crypt/expire
-# format is version-stable, and CFB is checked by the NIST vector unit test).
+# expiration differentials in BOTH directions (build-tagged mmkvconfig). Older
+# bindings lack that API; their plaintext equivalence still runs (the on-disk
+# crypt/expire format is version-stable, and CFB is checked by the NIST vector
+# unit test).
 EXTRA_TAGS=""
 case "$TAG" in
-v2.4.*) EXTRA_TAGS="-tags mmkvconfig" ;;
+v2.4.*)
+  EXTRA_TAGS="-tags mmkvconfig"
+  RUN="$RUN|TestEncrypted|TestExpire|TestMMKVEncWriteCgoReads|TestCgoEncWriteMMKVReads|TestMMKVExpireWriteCgoReads"
+  ;;
 esac
-( cd harness && go test $EXTRA_TAGS -run 'TestCgoEqualsPurego|TestEncrypted|TestExpire' -count=1 ./... )
+( cd harness && go test $EXTRA_TAGS -run "$RUN" -count=1 ./... )
 gatepass equiv
 if [ -n "$EXTRA_TAGS" ]; then gatepass crypt+expire; fi
 endgroup
@@ -58,8 +71,10 @@ group "gate: concurrent live-read (-race, same process)"
 gatepass race
 endgroup
 
-group "gate: multi-process (cgo writer + pure-Go readers, separate processes)"
+group "gate: multi-process (separate processes)"
+# cgo writer + pure-Go Reader, and a fully pure-Go MMKV writer + readers.
 ( cd harness && go test -run '^TestMultiProcess$' -count=1 ./... )
+go test -run '^TestMMKVMultiProcess$' -count=1 .
 gatepass multiproc
 endgroup
 
