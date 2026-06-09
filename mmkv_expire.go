@@ -32,6 +32,9 @@ func (m *MMKV) EnableAutoKeyExpire(seconds uint32) error {
 	if m.closed {
 		return ErrClosed
 	}
+	if m.readOnly {
+		return ErrReadOnly
+	}
 	m.checkLoadData()
 
 	wasEnabled := m.enableExpire
@@ -58,6 +61,9 @@ func (m *MMKV) DisableAutoKeyExpire() error {
 	defer m.unlockExclusive()
 	if m.closed {
 		return ErrClosed
+	}
+	if m.readOnly {
+		return ErrReadOnly
 	}
 	m.checkLoadData()
 	if !m.enableExpire {

@@ -27,6 +27,9 @@ func (m *MMKV) setValue(key string, blob []byte) error {
 	if m.closed {
 		return ErrClosed
 	}
+	if m.readOnly {
+		return ErrReadOnly
+	}
 	m.checkLoadData()
 	// compareBeforeSet (mutually exclusive with expiration): skip a redundant
 	// write when the stored value already equals the new one.
@@ -162,6 +165,9 @@ func (m *MMKV) RemoveValueForKey(key string) error {
 	if m.closed {
 		return ErrClosed
 	}
+	if m.readOnly {
+		return ErrReadOnly
+	}
 	m.checkLoadData()
 	if _, ok := m.dict[key]; !ok {
 		return nil
@@ -187,6 +193,9 @@ func (m *MMKV) RemoveValuesForKeys(keys []string) error {
 	if m.closed {
 		return ErrClosed
 	}
+	if m.readOnly {
+		return ErrReadOnly
+	}
 	m.checkLoadData()
 	removed := false
 	for _, k := range keys {
@@ -208,6 +217,9 @@ func (m *MMKV) ClearAll() error {
 	defer m.unlockExclusive()
 	if m.closed {
 		return ErrClosed
+	}
+	if m.readOnly {
+		return ErrReadOnly
 	}
 	m.checkLoadData()
 	return m.clearAllLocked()
@@ -243,6 +255,9 @@ func (m *MMKV) Trim() error {
 	defer m.unlockExclusive()
 	if m.closed {
 		return ErrClosed
+	}
+	if m.readOnly {
+		return ErrReadOnly
 	}
 	m.checkLoadData()
 	if m.actualSize == 0 {
@@ -280,6 +295,9 @@ func (m *MMKV) syncFlush(sync bool) error {
 	defer m.unlockExclusive()
 	if m.closed {
 		return ErrClosed
+	}
+	if m.readOnly {
+		return nil // nothing to flush
 	}
 	if err := m.data.msync(sync); err != nil {
 		return err

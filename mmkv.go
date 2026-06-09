@@ -18,6 +18,9 @@ import (
 // ErrClosed is returned by operations on a closed MMKV.
 var ErrClosed = errors.New("mmkv: instance closed")
 
+// ErrReadOnly is returned by mutating operations on a read-only instance.
+var ErrReadOnly = errors.New("mmkv: instance is read-only")
+
 // MMKV is a cgo-free, read+write MMKV instance: it reads and writes the official
 // on-disk format and uses the same flock protocol, so it interoperates with the
 // C++ library over the same files across processes. Open it with MMKVWithID.
@@ -37,6 +40,7 @@ type MMKV struct {
 	mmapID       string
 	key          string // registry key (absolute data path)
 	multiProcess bool
+	readOnly     bool
 
 	mu sync.Mutex // thread lock; serializes goroutines for this instance
 	fl *fileLock  // cross-process flock on the .crc fd (used only when multiProcess)
@@ -64,6 +68,7 @@ type MMKV struct {
 
 type mmkvConfig struct {
 	multiProcess     bool
+	readOnly         bool
 	cryptKey         []byte
 	onContentChanged func()
 	recover          bool
@@ -78,6 +83,11 @@ type MMKVOption func(*mmkvConfig)
 // sharing the file MUST also be multi-process. Without it, flock is skipped and
 // reads stay fast (single-process, like MMKV's default).
 func WithMultiProcess() MMKVOption { return func(c *mmkvConfig) { c.multiProcess = true } }
+
+// WithReadOnly opens the instance read-only: the files are mapped O_RDONLY and
+// every mutating call returns ErrReadOnly. The file must already exist. This is
+// the single-type way to read a store you must not (or cannot) write.
+func WithReadOnly() MMKVOption { return func(c *mmkvConfig) { c.readOnly = true } }
 
 // WithCryptKey opens an AES-encrypted instance. The AES width follows MMKV: a
 // key longer than 16 bytes selects AES-256, otherwise AES-128 (truncated/zero-
@@ -138,6 +148,7 @@ func MMKVWithID(rootDir, mmapID string, opts ...MMKVOption) (*MMKV, error) {
 		mmapID:           mmapID,
 		key:              key,
 		multiProcess:     cfg.multiProcess,
+		readOnly:         cfg.readOnly,
 		dict:             map[string][]byte{},
 		onContentChanged: cfg.onContentChanged,
 		recover:          cfg.recover,
@@ -154,6 +165,20 @@ func MMKVWithID(rootDir, mmapID string, opts ...MMKVOption) (*MMKV, error) {
 
 func (m *MMKV) open() error {
 	dataPath := dataPathFor(m.rootDir, m.mmapID)
+	if m.readOnly {
+		data, err := openMemoryFileReadOnly(dataPath)
+		if err != nil {
+			return err
+		}
+		meta, err := openMemoryFileReadOnly(dataPath + crcSuffix)
+		if err != nil {
+			_ = data.close()
+			return err
+		}
+		m.data, m.meta = data, meta
+		m.fl = newFileLock(meta.f)
+		return m.loadData()
+	}
 	if err := os.MkdirAll(filepath.Dir(dataPath), 0o777); err != nil {
 		return fmt.Errorf("mmkv: mkdir: %w", err)
 	}

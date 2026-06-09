@@ -18,9 +18,10 @@ import (
 // returned by memory() is invalid afterwards — never retain a view across a
 // truncate/close (same constraint as a remap in C++).
 type memoryFile struct {
-	f    *os.File
-	data []byte
-	size int
+	f        *os.File
+	data     []byte
+	size     int
+	readOnly bool
 }
 
 // pageRoundUp rounds n up to a multiple of the page size, with a one-page floor
@@ -59,6 +60,31 @@ func openMemoryFile(path string, minSize int) (*memoryFile, error) {
 		return nil, fmt.Errorf("mmkv: mmap %s: %w", path, err)
 	}
 	return &memoryFile{f: f, data: data, size: size}, nil
+}
+
+// openMemoryFileReadOnly maps an existing file O_RDONLY / PROT_READ. The file
+// must exist and be non-empty (no creation or growth in read-only mode).
+func openMemoryFileReadOnly(path string) (*memoryFile, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, fmt.Errorf("mmkv: open %s: %w", path, err)
+	}
+	st, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	size := int(st.Size())
+	if size <= 0 {
+		_ = f.Close()
+		return nil, fmt.Errorf("mmkv: empty file %s", path)
+	}
+	data, err := unix.Mmap(int(f.Fd()), 0, size, unix.PROT_READ, unix.MAP_SHARED)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("mmkv: mmap %s: %w", path, err)
+	}
+	return &memoryFile{f: f, data: data, size: size, readOnly: true}, nil
 }
 
 func (mf *memoryFile) memory() []byte { return mf.data }
@@ -107,7 +133,11 @@ func (mf *memoryFile) remap() error {
 		}
 		mf.data = nil
 	}
-	data, err := unix.Mmap(int(mf.f.Fd()), 0, size, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	prot := unix.PROT_READ | unix.PROT_WRITE
+	if mf.readOnly {
+		prot = unix.PROT_READ
+	}
+	data, err := unix.Mmap(int(mf.f.Fd()), 0, size, prot, unix.MAP_SHARED)
 	if err != nil {
 		return fmt.Errorf("mmkv: mmap: %w", err)
 	}

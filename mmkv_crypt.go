@@ -23,6 +23,9 @@ func (m *MMKV) ReKey(newKey []byte) error {
 	if m.closed {
 		return ErrClosed
 	}
+	if m.readOnly {
+		return ErrReadOnly
+	}
 	m.checkLoadData() // decrypts with the current key into dict (plaintext views)
 
 	prev := m.crypt
