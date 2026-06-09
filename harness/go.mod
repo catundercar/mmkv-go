@@ -9,6 +9,8 @@ require (
 	tencent.com/mmkv v0.0.0-00010101000000-000000000000
 )
 
+require golang.org/x/sys v0.28.0 // indirect
+
 replace tencent.com/mmkv => ../MMKV/output/tencent.com/mmkv
 
 replace github.com/catundercar/mmkv-go => ..
