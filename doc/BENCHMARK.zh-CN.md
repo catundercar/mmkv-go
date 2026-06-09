@@ -56,7 +56,8 @@ cgo 写进程（`MMKV_MULTI_PROCESS`）狂写 + 纯 Go 读（默认透明刷新�
 
 47 万次并发读零撕裂、零 CRC 错误，且读到写进程的最终值。关键是 reload 时取的**共享 flock** 保证一致快照
 ——（曾实测：去掉该 flock，百万次并发重读会撞到 CRC 错误，即撕裂读被 CRC 拦下；加上后归零）。见
-`harness/concurrency_test.go`。
+`harness/concurrency_test.go`。另有**多进程**测试（`harness/multiprocess_test.go`）：cgo 写与纯 Go 读
+分别跑在独立 OS 进程里，真正验证跨进程 flock 互锁。
 
 ## 结论
 

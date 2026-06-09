@@ -67,7 +67,8 @@ A cgo writer (`MMKV_MULTI_PROCESS`) hammering writes + a pure-Go reader (transpa
 470k concurrent reads with zero torn reads, zero CRC errors, and observing the writer's final value. The key is the
 **shared flock** taken on reload, which guarantees a consistent snapshot — (measured earlier: without that flock, a
 million concurrent re-reads do hit CRC errors, i.e. torn reads caught by CRC; with it, zero). See
-`harness/concurrency_test.go`.
+`harness/concurrency_test.go`. A separate **multi-process** test (`harness/multiprocess_test.go`) runs the cgo
+writer and the pure-Go readers as distinct OS processes, exercising the cross-process flock interlock for real.
 
 ## Conclusion
 

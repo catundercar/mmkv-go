@@ -133,7 +133,8 @@ sequence)**（无锁内存读，对齐 MMKV `checkLoadData`：普通 set 改 crc
 - **Phase 1（完成，TDD）**：明文 + 无过期 + 只读。差分测试为预言：官方 cgo 写/读回 → 纯 Go 逐 key 断言相等。
 - **Phase 2（完成）**：CRC 校验；**默认透明刷新**（mmap + check-on-read + 共享 flock）单写多读安全并发；
   namespace + 特殊字符文件名；纯 Go `BackupOne`。已用 `-race` 并发测试验证
-  （cgo MP 写 + 纯 Go 读，~47 万次读零撕裂、读到最新，见 `harness/concurrency_test.go`）。
+  （同进程 cgo MP 写 + 纯 Go 读，~47 万次读零撕裂、读到最新，`harness/concurrency_test.go`），
+  以及真正的**多进程**测试（独立的 cgo 写进程 + 多个纯 Go 读进程，验证跨进程 flock 互锁，`harness/multiprocess_test.go`）。
 - **Phase 3（完成）**：加密——内置 AES-CFB-128/256（`WithEncryption`），IV 取自 meta、整段单条 CFB 流、CRC 校验密文；
   用 NIST CFB 已知向量（宿主机）+ v2.4.0 上的 cgo 差分验证。过期——尾部 4 字节时间戳剥离 + 过滤；
   v2.4.0 上 cgo 差分（永不/真过期）验证。（加密/过期差分用 v2.4.0 统一配置 binding；格式本身版本稳定。）

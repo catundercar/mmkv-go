@@ -148,8 +148,9 @@ idle — "every read is automatically up to date" like MMKV C++, but cheaper (MM
   library writes/reads back → pure Go asserts equality key-by-key.
 - **Phase 2 (done)**: CRC checking; **transparent refresh by default** (mmap + check-on-read + shared flock) for
   safe single-writer/multi-reader concurrency; namespace + special-character filenames; pure-Go `BackupOne`. Verified
-  with a `-race` concurrency test (cgo MP writer + pure-Go reader, ~470k reads, zero torn reads, always up to date —
-  see `harness/concurrency_test.go`).
+  with a `-race` same-process concurrency test (cgo MP writer + pure-Go reader, ~470k reads, zero torn reads, always
+  up to date — `harness/concurrency_test.go`) and a true **multi-process** test (a cgo writer process + several pure-Go
+  reader processes, exercising the cross-process flock interlock — `harness/multiprocess_test.go`).
 - **Phase 3 (done)**: encryption — built-in AES-CFB-128/256 (`WithEncryption`), IV from meta, single contiguous CFB
   stream, CRC over ciphertext; verified by NIST CFB known-answer vectors (host) + a cgo differential on v2.4.0. Key
   expiration — trailing 4-byte timestamp stripped + filtered; cgo differential (never / actually-expired) on v2.4.0.

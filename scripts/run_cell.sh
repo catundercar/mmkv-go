@@ -47,8 +47,12 @@ esac
 ( cd harness && go test $EXTRA_TAGS -run 'TestCgoEqualsPurego|TestEncrypted|TestExpire' -count=1 ./... )
 endgroup
 
-group "gate: concurrent live-read (-race)"
+group "gate: concurrent live-read (-race, same process)"
 ( cd harness && go test -race -run TestLiveReadConcurrent -count=1 ./... )
+endgroup
+
+group "gate: multi-process (cgo writer + pure-Go readers, separate processes)"
+( cd harness && go test -run '^TestMultiProcess$' -count=1 ./... )
 endgroup
 
 # ---------- B. performance (report only) ----------
