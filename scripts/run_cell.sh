@@ -22,9 +22,12 @@ mkdir -p "$RESULTS"
 # self-contained replace directives.
 export GOWORK=off GOFLAGS=-mod=mod
 CELL="$TAG-$ARCH"
+GATE="$RESULTS/$CELL.gate.txt"
+: >"$GATE" # records each functional gate that passed (set -e aborts the cell on failure)
 
 group() { echo "::group::$*"; }
 endgroup() { echo "::endgroup::"; }
+gatepass() { printf '%s\n' "$1" >>"$GATE"; }
 
 group "build output ($TAG, $ARCH)"
 bash scripts/build_output.sh "$TAG" "$ROOT/MMKV"
@@ -33,6 +36,7 @@ endgroup
 # ---------- A. functional gate (hard fail) ----------
 group "gate: pure-Go unit/reader tests"
 go test ./...
+gatepass unit
 endgroup
 
 group "gate: functional equivalence (cgo ≡ purego, version $TAG)"
@@ -45,14 +49,18 @@ case "$TAG" in
 v2.4.*) EXTRA_TAGS="-tags mmkvconfig" ;;
 esac
 ( cd harness && go test $EXTRA_TAGS -run 'TestCgoEqualsPurego|TestEncrypted|TestExpire' -count=1 ./... )
+gatepass equiv
+if [ -n "$EXTRA_TAGS" ]; then gatepass crypt+expire; fi
 endgroup
 
 group "gate: concurrent live-read (-race, same process)"
 ( cd harness && go test -race -run TestLiveReadConcurrent -count=1 ./... )
+gatepass race
 endgroup
 
 group "gate: multi-process (cgo writer + pure-Go readers, separate processes)"
 ( cd harness && go test -run '^TestMultiProcess$' -count=1 ./... )
+gatepass multiproc
 endgroup
 
 # ---------- B. performance (report only) ----------

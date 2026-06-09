@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Aggregate per-cell benchmark outputs into one markdown report.
+"""Aggregate per-cell functional gates + benchmark outputs into one markdown report.
 
-Reads results/<version>-<arch>.cpp.txt (C++ "RESULT\\tcpp\\t<op>\\t<size>\\t<ns>\\t<mb_s>")
-and results/<version>-<arch>.go.txt (Go "Benchmark<Name>-N  iters  X ns/op  Y B/op  Z allocs/op"),
-and emits cross-version/arch tables plus a clean 3-way comparison at bytes 4KB get.
+Reads, per cell (<version>-<arch>):
+  - results/<cell>.gate.txt  one passed-gate name per line (unit/equiv/crypt+expire/race/multiproc)
+  - results/<cell>.cpp.txt   C++ "RESULT\\tcpp\\t<op>\\t<size>\\t<ns>\\t<mb_s>"
+  - results/<cell>.go.txt    Go "Benchmark<Name>-N  iters  X ns/op  Y B/op  Z allocs/op"
+and emits a functional-gate matrix first, then cross-version/arch performance tables.
 
 Usage: aggregate.py [results_dir]   # default ./results ; prints markdown to stdout
 """
@@ -19,6 +21,7 @@ GO_RE = re.compile(r"^Benchmark(\S+?)-\d+\s+\d+\s+([\d.]+) ns/op(?:\s+(\d+) B/op
 # (version, arch) -> impl/name -> ns ; and B/op, allocs
 go = defaultdict(dict)         # cell -> benchname -> (ns, bpop, allocs)
 cpp = defaultdict(dict)        # cell -> (op,size) -> ns
+gates = defaultdict(set)       # cell -> {passed gate names}
 cells = set()
 
 
@@ -47,6 +50,13 @@ for fn in sorted(os.listdir(RESULTS)) if os.path.isdir(RESULTS) else []:
                 bpop = int(m.group(3)) if m.group(3) else 0
                 allocs = int(m.group(4)) if m.group(4) else 0
                 go[(ver, arch)][name] = (ns, bpop, allocs)
+    elif fn.endswith(".gate.txt"):
+        ver, arch = parse_cell(fn)
+        cells.add((ver, arch))      # a cell that failed a gate has perf missing; still list it
+        for line in open(path):
+            name = line.strip()
+            if name:
+                gates[(ver, arch)].add(name)
 
 
 def ver_key(v):
@@ -66,9 +76,42 @@ w = out.append
 
 w("# MMKV 三方测试报告（版本 × 架构）\n")
 w(f"覆盖 {len({c[0] for c in cells})} 个版本 × {len({c[1] for c in cells})} 架构 = {len(cells)} cells。")
-w("功能门禁（cgo≡purego / 单测 / -race）由各 cell job 状态保证；下表为性能。\n")
+w("分两部分：**① 功能门禁矩阵**（cgo≡purego / 单测 / -race / 多进程 / 加密过期）+ **② 性能报告**（C++ / cgo / purego）。\n")
 
 archs = sorted({c[1] for c in cells})
+
+# ---- functional-gate matrix (the hard gate; perf is report-only) ----
+GATE_COLS = [
+    ("unit", "unit/reader"),
+    ("equiv", "cgo≡purego"),
+    ("crypt+expire", "crypt+expire"),
+    ("race", "-race live"),
+    ("multiproc", "multi-process"),
+]
+
+
+def is_v24(v):
+    return v.startswith("v2.4.")
+
+
+w("\n## ① 功能门禁矩阵（version × arch）\n")
+w("每个 cell 在 CI 中按序跑下列门禁，任一失败即 `set -e` 中止该 cell（job 变红、性能不再产出）。")
+w("✓=通过，✗=未通过/未运行，—=该版本无统一 Config binding（加密/过期差分仅在 v2.4.x 跑；CFB 另由 NIST 向量单测覆盖）。\n")
+w("| version | arch | " + " | ".join(label for _, label in GATE_COLS) + " |")
+w("|---|---|" + "|".join([":-:"] * len(GATE_COLS)) + "|")
+for v, arch in sorted_cells():
+    passed = gates.get((v, arch), set())
+    marks = []
+    for key, _ in GATE_COLS:
+        if key in passed:
+            marks.append("✓")
+        elif key == "crypt+expire" and not is_v24(v):
+            marks.append("—")
+        else:
+            marks.append("✗")
+    w(f"| {v} | {arch} | " + " | ".join(marks) + " |")
+w("\n> ✗ 仅在 cell 失败仍上传了部分产物时可见——正常 PR/push 下任一 ✗ 会让对应 job 直接失败。\n")
+w("\n## ② 性能报告\n")
 
 # ---- Go: cgo vs purego, ns/op, per arch ----
 GO_ROWS = [
