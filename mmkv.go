@@ -41,8 +41,9 @@ type MMKV struct {
 	mu sync.Mutex // thread lock; serializes goroutines for this instance
 	fl *fileLock  // cross-process flock on the .crc fd (used only when multiProcess)
 
-	data *memoryFile
-	meta *memoryFile
+	data  *memoryFile
+	meta  *memoryFile
+	crypt *aesCFB // nil = plaintext
 
 	info       metaInfo
 	dict       map[string][]byte // key -> value blob (view into the plaintext region)
@@ -58,6 +59,7 @@ type MMKV struct {
 
 type mmkvConfig struct {
 	multiProcess bool
+	cryptKey     []byte
 }
 
 // MMKVOption configures an MMKV instance at open time.
@@ -69,6 +71,14 @@ type MMKVOption func(*mmkvConfig)
 // sharing the file MUST also be multi-process. Without it, flock is skipped and
 // reads stay fast (single-process, like MMKV's default).
 func WithMultiProcess() MMKVOption { return func(c *mmkvConfig) { c.multiProcess = true } }
+
+// WithCryptKey opens an AES-encrypted instance. The AES width follows MMKV: a
+// key longer than 16 bytes selects AES-256, otherwise AES-128 (truncated/zero-
+// padded). Pass the same key the file was written with; open the same file with
+// consistent options across the process (the instance is cached by path).
+func WithCryptKey(key []byte) MMKVOption {
+	return func(c *mmkvConfig) { c.cryptKey = append([]byte(nil), key...) }
+}
 
 var (
 	gInstanceMu sync.Mutex
@@ -106,6 +116,9 @@ func MMKVWithID(rootDir, mmapID string, opts ...MMKVOption) (*MMKV, error) {
 		key:          key,
 		multiProcess: cfg.multiProcess,
 		dict:         map[string][]byte{},
+	}
+	if len(cfg.cryptKey) > 0 {
+		m.crypt = newAESCFB(cfg.cryptKey)
 	}
 	if err := m.open(); err != nil {
 		return nil, err
@@ -254,8 +267,16 @@ func (m *MMKV) crcValid(actual, want uint32) bool {
 }
 
 func (m *MMKV) decodeRegion(actual, crc uint32) error {
-	region := m.data.memory()[4 : 4+actual]
-	dict, err := parseDict(region) // plaintext; encryption decrypts here in a later phase
+	region := m.data.memory()[4 : 4+actual] // ciphertext when encrypted (CRC is over this)
+	plain := region
+	if m.crypt != nil {
+		p, err := m.crypt.Decrypt(region, m.info.iv[:])
+		if err != nil {
+			return err
+		}
+		plain = p // heap buffer; dict views point into it (kept alive by dict)
+	}
+	dict, err := parseDict(plain)
 	if err != nil {
 		return err
 	}

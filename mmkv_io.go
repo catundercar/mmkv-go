@@ -41,8 +41,12 @@ func (m *MMKV) setBlob(key string, blob []byte) error {
 	o.writeData(blob)
 	pair := o.bytes()
 
+	// The append fast path writes plaintext bytes in place; with encryption the
+	// region is a single CFB stream, so an encrypted set always re-encrypts via a
+	// full write-back (correct and simple; incremental encrypted append is a
+	// future optimization).
 	spaceLeft := m.data.fileSize() - 4 - int(m.actualSize)
-	if len(pair) <= spaceLeft && len(m.dict) > 0 && m.info.version >= versionFlag {
+	if m.crypt == nil && len(pair) <= spaceLeft && len(m.dict) > 0 && m.info.version >= versionFlag {
 		p := 4 + int(m.actualSize)
 		m.appendRaw(pair)
 		blobStart := p + (len(pair) - len(blob))
@@ -79,15 +83,31 @@ func (m *MMKV) fullWriteback() error {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	region := encodeRegion(keys, m.dict) // built into a separate buffer (no aliasing with the mmap)
+	region := encodeRegion(keys, m.dict) // PLAINTEXT region, separate buffer (no aliasing with the mmap)
 	total := len(region)
 
-	if 4+total > m.data.fileSize() {
+	// payload is what lands on disk: ciphertext when encrypted (a fresh IV per
+	// full write-back, like MMKV), else the plaintext region. CFB preserves length.
+	payload := region
+	if m.crypt != nil {
+		iv, err := randomIV()
+		if err != nil {
+			return err
+		}
+		ct, err := m.crypt.Encrypt(region, iv[:])
+		if err != nil {
+			return err
+		}
+		payload = ct
+		m.info.iv = iv
+	}
+
+	if 4+len(payload) > m.data.fileSize() {
 		newSize := m.data.fileSize()
 		if newSize < 1 {
 			newSize = 1
 		}
-		for 4+total >= newSize { // double until it fits (page-rounded by truncate)
+		for 4+len(payload) >= newSize { // double until it fits (page-rounded by truncate)
 			newSize *= 2
 		}
 		if err := m.data.truncate(newSize); err != nil {
@@ -97,9 +117,9 @@ func (m *MMKV) fullWriteback() error {
 
 	mem := m.data.memory()
 	clear(mem[:4]) // legacy header stays zero for version>=3
-	copy(mem[4:4+total], region)
-	m.actualSize = uint32(total)
-	m.crcDigest = crc32.ChecksumIEEE(mem[4 : 4+total])
+	copy(mem[4:4+len(payload)], payload)
+	m.actualSize = uint32(len(payload))
+	m.crcDigest = crc32.ChecksumIEEE(mem[4 : 4+len(payload)]) // CRC over the on-disk bytes (ciphertext when encrypted)
 
 	m.info.sequence++
 	m.info.version = versionFlag
@@ -109,7 +129,12 @@ func (m *MMKV) fullWriteback() error {
 	m.info.lastCRCDigest = m.crcDigest
 	copy(m.meta.memory(), m.info.marshal())
 
-	dict, err := parseDict(mem[4 : 4+total]) // rebuild views into the new region
+	// rebuild dict views: from the plaintext region when encrypted, else the mmap.
+	src := region
+	if m.crypt == nil {
+		src = mem[4 : 4+total]
+	}
+	dict, err := parseDict(src)
 	if err != nil {
 		return err
 	}

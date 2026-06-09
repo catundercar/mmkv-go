@@ -65,3 +65,25 @@ func (a *aesCFB) Decrypt(ct, iv []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// Encrypt is the inverse of Decrypt (CFB-128): the ciphertext byte (the output)
+// is fed back into the register. len(out) == len(pt). Used by the write path.
+func (a *aesCFB) Encrypt(pt, iv []byte) ([]byte, error) {
+	if len(iv) < 16 {
+		return nil, errShortIV
+	}
+	out := make([]byte, len(pt))
+	var reg, ks [16]byte
+	copy(reg[:], iv[:16])
+	n := 0
+	for i := 0; i < len(pt); i++ {
+		if n == 0 {
+			a.block.Encrypt(ks[:], reg[:])
+		}
+		c := pt[i] ^ ks[n]
+		out[i] = c
+		reg[n] = c
+		n = (n + 1) & 15
+	}
+	return out, nil
+}
