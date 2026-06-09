@@ -80,10 +80,37 @@ func NameSpace(rootDir string) NS; BackupOneToDirectory(...) / RestoreOneFromDir
 ```
 Zero-copy view lifetime tightens vs the reader: the data is RW-mmap'd and can remap on grow or on a reload triggered by another process, so a view is valid **only until the next call on that instance** (matching C++ `MMBufferNoCopy`). Default getters return views; `…Copy` for retention.
 
-## 5. Phases & status
-- **Phase A — plaintext core + interop foundation** *(in progress)*: append/full-writeback/grow/recovery, single+multi-process flock, registry, all scalar/string/bytes/`vector<string>`, remove/clear/trim/sync/count/keys/contains.
-  - **Done so far** (this branch): `encode.go` (CodedOutputData incl. negative-int32 10-byte + double-wrap), `flock.go` (ref-counted flock with upgrade/downgrade), `memfile.go` (RW mmap + truncate/remap + msync), `meta.go` write side (`lastConfirmed` + `marshal`), and a Phase-A `Writer` (batch full-write-back). **Verified**: encode/flock/memfile unit tests (`-race`), `Writer`→`Reader` round-trip, and the cgo differential **`Writer`→official C++ reads equal** on v2.4.0 (`harness/write_equiv_test.go`).
-- **Phase B** — key expiration. **Phase C** — encryption write + `ReKey` (single hardest; CFB continuous stream, IV rotation, atomic re-key). **Phase D** — backup/restore + handlers. **Phase E** — compareBeforeSet (override write path; last, it changes append behavior).
+## 5. Status — implemented
+
+The live read+write `MMKV` type is implemented and verified (host `-race` + a
+bidirectional cgo differential on v2.4.0; CI gates the differential across the
+version matrix):
+
+- **Core**: registry (one instance per file per process), open/load with
+  last-confirmed recovery, per-op locking (thread lock + shared/exclusive flock;
+  disabled in single-process), checkLoadData freshness (full reload + remap /
+  incremental), the append fast path + full write-back + grow, all typed
+  Get/Set, Remove(s)/ClearAll/Trim/Count/AllKeys/Contains/TotalSize/ActualSize,
+  Sync/Async.
+- **Encryption**: `WithCryptKey` (AES-128/256), encrypted full write-back with IV
+  rotation, `ReKey` (plaintext↔encrypted + key change).
+- **Expiration**: `EnableAutoKeyExpire`/`DisableAutoKeyExpire` (trailing 4-byte
+  timestamp, meta flag, filter-on-read).
+- **Concurrency**: public `Lock`/`Unlock`/`TryLock`; a pure-Go multi-process test
+  (writer + readers as separate processes, zero torn reads).
+- **Ops**: `BackupOne` + pure-Go `RestoreOneFromDirectory`, `NameSpace`,
+  `CheckExist`/`IsFileValid`/`RemoveStorage`, `compareBeforeSet`, content-changed
+  + recover handlers, read-only mode (`WithReadOnly`).
+
+The read-only `Reader` is kept as the zero-copy, lock-free specialization (the
+benchmark path + the existing cgo-equivalence gate); a single type still covers
+read-only use via `WithReadOnly`. `vector<string>` is **not** implemented — the
+Go cgo binding doesn't expose it, so it can't be differential-tested (the wire
+format is documented above for a future native-C++ check).
+
+Not yet optimized: encrypted writes always full-rewrite (incremental encrypted
+append is future work); the writer always emits format v4 (cross-version writes
+to a pre-v1.3.0 target would need version targeting).
 
 ## 6. Verification (acceptance gates)
 1. **Bidirectional differential** across the 7-version × 2-arch matrix: C++ writes → Go reads (existing `TestCgoEqualsPurego`) **and** Go writes → C++ reads (`TestPuregoWriteCgoReads`), all types/boundaries.

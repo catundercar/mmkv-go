@@ -79,10 +79,19 @@ func NameSpace(rootDir string) NS; BackupOneToDirectory(...) / RestoreOneFromDir
 ```
 零拷贝视图生命周期较只读更紧:数据走 RW mmap,扩容或他进程触发的 reload 都会 remap,故视图**仅在该实例下次调用前**有效(对齐 C++ `MMBufferNoCopy`)。默认 getter 返回视图,需留存用 `…Copy`。
 
-## 5. 阶段与状态
-- **Phase A —— 明文核心 + 互通地基** *(进行中)*:append/full-writeback/grow/recovery、单+多进程 flock、注册表、全部 标量/string/bytes/`vector<string>`、remove/clear/trim/sync/count/keys/contains。
-  - **已完成**(本分支):`encode.go`(CodedOutputData,含负 int32 10 字节 + double-wrap)、`flock.go`(计数 flock + 升降级)、`memfile.go`(RW mmap + truncate/remap + msync)、`meta.go` 写侧(`lastConfirmed` + `marshal`),以及 Phase-A `Writer`(批量 full-write-back)。**已验证**:encode/flock/memfile 单测(`-race`)、`Writer`→`Reader` 往返,以及 cgo 差分 **`Writer`→官方 C++ 读到相等**(v2.4.0,`harness/write_equiv_test.go`)。
-- **Phase B** —— 过期。**Phase C** —— 加密写 + `ReKey`(单点最难:CFB 续流、IV 轮换、原子 re-key)。**Phase D** —— 备份还原 + handler。**Phase E** —— compareBeforeSet(override 写路径;最后做,会改变 append 行为)。
+## 5. 状态 —— 已实现
+
+可读写 `MMKV` 类型已实现并验证(host `-race` + v2.4.0 双向 cgo 差分;CI 在版本矩阵上守护差分):
+
+- **核心**:注册表(每进程每文件单实例)、加载 + last-confirmed 恢复、逐操作加锁(线程锁 + 共享/排他 flock;单进程禁用)、checkLoadData 新鲜度(全量 reload+remap / 增量)、append 快路径 + full write-back + grow、全部 typed Get/Set、Remove(s)/ClearAll/Trim/Count/AllKeys/Contains/TotalSize/ActualSize、Sync/Async。
+- **加密**:`WithCryptKey`(AES-128/256)、加密 full write-back + IV 轮换、`ReKey`(明文↔加密 + 换 key)。
+- **过期**:`EnableAutoKeyExpire`/`DisableAutoKeyExpire`(尾部 4 字节时间戳、meta flag、读时过滤)。
+- **并发**:公共 `Lock`/`Unlock`/`TryLock`;纯 Go 多进程测试(写者 + 读者独立进程,零撕裂)。
+- **运维**:`BackupOne` + 纯 Go `RestoreOneFromDirectory`、`NameSpace`、`CheckExist`/`IsFileValid`/`RemoveStorage`、`compareBeforeSet`、content-changed + recover handler、只读模式(`WithReadOnly`)。
+
+只读 `Reader` 保留为零拷贝、无锁特化(基准路径 + 现有 cgo 等价 gate);单一类型通过 `WithReadOnly` 也能覆盖只读。`vector<string>` **未实现** —— Go cgo binding 不暴露它,无法做差分(线格式已在上文记录,留待将来用原生 C++ 校验)。
+
+尚未优化:加密写每次全量重写(增量加密 append 为后续);writer 始终写 format v4(向 v1.3.0 之前的目标写需要版本目标化)。
 
 ## 6. 验收门禁
 1. **双向差分**(7 版本 × 2 架构):C++ 写→Go 读(已有 `TestCgoEqualsPurego`)**且** Go 写→C++ 读(`TestPuregoWriteCgoReads`),覆盖全类型/边界。
