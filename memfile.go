@@ -89,6 +89,33 @@ func (mf *memoryFile) truncate(newSize int) error {
 	return nil
 }
 
+// remap re-maps to the file's current on-disk size without changing it — used
+// to pick up a grow/shrink performed by another process (cross-process reload).
+// Invalidates any prior memory().
+func (mf *memoryFile) remap() error {
+	st, err := mf.f.Stat()
+	if err != nil {
+		return err
+	}
+	size := int(st.Size())
+	if size == mf.size && mf.data != nil {
+		return nil
+	}
+	if mf.data != nil {
+		if err := unix.Munmap(mf.data); err != nil {
+			return fmt.Errorf("mmkv: munmap: %w", err)
+		}
+		mf.data = nil
+	}
+	data, err := unix.Mmap(int(mf.f.Fd()), 0, size, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	if err != nil {
+		return fmt.Errorf("mmkv: mmap: %w", err)
+	}
+	mf.data = data
+	mf.size = size
+	return nil
+}
+
 // msync flushes the mapping; sync=true is MS_SYNC (durable), false MS_ASYNC.
 func (mf *memoryFile) msync(sync bool) error {
 	flag := unix.MS_ASYNC
