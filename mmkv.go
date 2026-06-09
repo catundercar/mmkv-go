@@ -407,6 +407,24 @@ func (m *MMKV) Err() error {
 	return m.lastErr
 }
 
+// MmapID returns the instance's mmapID; RootDir returns its root directory.
+func (m *MMKV) MmapID() string  { return m.mmapID }
+func (m *MMKV) RootDir() string { return m.rootDir }
+
+// ClearMemoryCache drops the in-memory dictionary so the next access reloads
+// from disk (matches MMKV's clearMemoryCache). It does not change the files.
+func (m *MMKV) ClearMemoryCache() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	m.dict = map[string][]byte{}
+	m.actualSize = 0
+	m.crcDigest = 0
+	m.needLoad = true
+}
+
 // value returns the value blob for key. With expiration on, the trailing 4-byte
 // little-endian timestamp is stripped and an expired key (timestamp != 0 && <=
 // now) reads as absent (matches MMKV). Caller holds the lock.
