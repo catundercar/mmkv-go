@@ -51,6 +51,9 @@ type MMKV struct {
 	needLoad   bool
 	closed     bool
 	lastErr    error
+
+	enableExpire   bool   // values carry a trailing 4-byte expire timestamp
+	expiredSeconds uint32 // default per-set duration; 0 = never (in-memory only)
 }
 
 type mmkvConfig struct {
@@ -225,6 +228,8 @@ func (m *MMKV) loadData() error {
 	if m.info.version > maxSupportedVersion {
 		return fmt.Errorf("%w: %d", ErrUnsupportedVersion, m.info.version)
 	}
+	// expiration is persisted as a meta flag; the per-set duration is in-memory.
+	m.enableExpire = m.info.version >= versionFlag && m.info.expireEnabled()
 	fileSize := len(m.data.memory())
 
 	actual := m.readActualSize()
@@ -294,11 +299,22 @@ func (m *MMKV) Err() error {
 	return m.lastErr
 }
 
-// value returns the value blob for key (expiration handling is added in a later
-// phase). Caller holds the lock.
+// value returns the value blob for key. With expiration on, the trailing 4-byte
+// little-endian timestamp is stripped and an expired key (timestamp != 0 && <=
+// now) reads as absent (matches MMKV). Caller holds the lock.
 func (m *MMKV) value(key string) ([]byte, bool) {
 	v, ok := m.dict[key]
-	return v, ok
+	if !ok {
+		return nil, false
+	}
+	if m.enableExpire && len(v) >= 4 {
+		t := binary.LittleEndian.Uint32(v[len(v)-4:])
+		if t != 0 && t <= nowUnix() {
+			return nil, false // expired
+		}
+		v = v[:len(v)-4]
+	}
+	return v, true
 }
 
 // bytesValue strips the inner length layer MMKV wraps around string/[]byte
@@ -511,10 +527,19 @@ func (m *MMKV) Count() int {
 		return 0
 	}
 	m.checkLoadData()
-	return len(m.dict)
+	if !m.enableExpire {
+		return len(m.dict)
+	}
+	n := 0
+	for k := range m.dict {
+		if _, ok := m.value(k); ok {
+			n++
+		}
+	}
+	return n
 }
 
-// AllKeys returns all keys, sorted.
+// AllKeys returns all live (non-expired) keys, sorted.
 func (m *MMKV) AllKeys() []string {
 	m.lockShared()
 	defer m.unlockShared()
@@ -524,7 +549,9 @@ func (m *MMKV) AllKeys() []string {
 	m.checkLoadData()
 	keys := make([]string, 0, len(m.dict))
 	for k := range m.dict {
-		keys = append(keys, k)
+		if _, ok := m.value(k); ok {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	return keys

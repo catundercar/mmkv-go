@@ -27,6 +27,9 @@ func (m *MMKV) setValue(key string, blob []byte) error {
 		return ErrClosed
 	}
 	m.checkLoadData()
+	if m.enableExpire {
+		blob = appendExpire(blob, m.expiredSeconds)
+	}
 	return m.setBlob(key, blob)
 }
 
