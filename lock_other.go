@@ -11,6 +11,10 @@ func flockShared(f *os.File) error {
 	return errors.New("mmkv: only supported on POSIX (needs flock)")
 }
 
+func flockExclusive(f *os.File) error {
+	return errors.New("mmkv: only supported on POSIX (needs flock)")
+}
+
 func flockUnlock(f *os.File) {}
 
 func mmapReadonly(f *os.File, size int) ([]byte, error) {

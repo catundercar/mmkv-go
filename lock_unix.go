@@ -15,6 +15,12 @@ func flockShared(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
 }
 
+// flockExclusive takes a blocking exclusive (LOCK_EX) flock — used by restore to
+// interlock with live instances and other processes during an in-place overwrite.
+func flockExclusive(f *os.File) error {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+}
+
 func flockUnlock(f *os.File) {
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
