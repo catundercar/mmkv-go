@@ -57,11 +57,16 @@ type MMKV struct {
 	expiredSeconds uint32 // default per-set duration; 0 = never (in-memory only)
 
 	compareBeforeSet bool // skip a write when the new value equals the stored one (in-memory only)
+
+	onContentChanged func() // called after a cross-process reload (optional)
+	recover          bool   // on unrecoverable CRC failure, greedy-salvage instead of discarding
 }
 
 type mmkvConfig struct {
-	multiProcess bool
-	cryptKey     []byte
+	multiProcess     bool
+	cryptKey         []byte
+	onContentChanged func()
+	recover          bool
 }
 
 // MMKVOption configures an MMKV instance at open time.
@@ -80,6 +85,22 @@ func WithMultiProcess() MMKVOption { return func(c *mmkvConfig) { c.multiProcess
 // consistent options across the process (the instance is cached by path).
 func WithCryptKey(key []byte) MMKVOption {
 	return func(c *mmkvConfig) { c.cryptKey = append([]byte(nil), key...) }
+}
+
+// WithContentChangedHandler registers a callback invoked after the instance
+// reloads because another process changed the file (multi-process mode). It runs
+// while the instance lock is held, so do not call back into this instance from
+// it; keep it short.
+func WithContentChangedHandler(fn func()) MMKVOption {
+	return func(c *mmkvConfig) { c.onContentChanged = fn }
+}
+
+// WithRecoverOnError salvages as much as possible (greedy decode) when the data
+// region fails its CRC and the last-confirmed snapshot can't be restored either,
+// instead of discarding to empty. The salvaged state is served read-only and
+// rewritten cleanly on the next write.
+func WithRecoverOnError() MMKVOption {
+	return func(c *mmkvConfig) { c.recover = true }
 }
 
 var (
@@ -113,11 +134,13 @@ func MMKVWithID(rootDir, mmapID string, opts ...MMKVOption) (*MMKV, error) {
 		return m, nil
 	}
 	m := &MMKV{
-		rootDir:      rootDir,
-		mmapID:       mmapID,
-		key:          key,
-		multiProcess: cfg.multiProcess,
-		dict:         map[string][]byte{},
+		rootDir:          rootDir,
+		mmapID:           mmapID,
+		key:              key,
+		multiProcess:     cfg.multiProcess,
+		dict:             map[string][]byte{},
+		onContentChanged: cfg.onContentChanged,
+		recover:          cfg.recover,
 	}
 	if len(cfg.cryptKey) > 0 {
 		m.crypt = newAESCFB(cfg.cryptKey)
@@ -201,8 +224,16 @@ func (m *MMKV) checkLoadData() {
 	}
 	if live.sequence != m.info.sequence {
 		m.reloadBestEffort(true)
+		m.notifyChanged()
 	} else if live.crcDigest != m.crcDigest || live.actualSize != m.actualSize {
 		m.reloadBestEffort(false)
+		m.notifyChanged()
+	}
+}
+
+func (m *MMKV) notifyChanged() {
+	if m.onContentChanged != nil {
+		m.onContentChanged()
 	}
 }
 
@@ -257,10 +288,39 @@ func (m *MMKV) loadData() error {
 		m.info.crcDigest = m.info.lastCRCDigest
 		return m.decodeRegion(la, m.info.lastCRCDigest)
 	}
+	if m.recover {
+		return m.salvage()
+	}
 	// discard to empty (last resort; matches MMKV's non-recover strategy)
 	m.dict = map[string][]byte{}
 	m.actualSize = 0
 	m.crcDigest = 0
+	return nil
+}
+
+// salvage greedily decodes a corrupt region (clamped to the file) into dict,
+// keeping the meta-derived size/crc so a multi-process reload doesn't loop. The
+// next write recomputes a correct CRC.
+func (m *MMKV) salvage() error {
+	fileSize := len(m.data.memory())
+	actual := m.info.actualSize
+	if int(actual)+4 > fileSize {
+		if fileSize >= 4 {
+			actual = uint32(fileSize - 4)
+		} else {
+			actual = 0
+		}
+	}
+	region := m.data.memory()[4 : 4+actual]
+	plain := region
+	if m.crypt != nil {
+		if p, err := m.crypt.Decrypt(region, m.info.iv[:]); err == nil {
+			plain = p
+		}
+	}
+	m.dict = parseDictGreedy(plain)
+	m.actualSize = m.info.actualSize
+	m.crcDigest = m.info.crcDigest
 	return nil
 }
 

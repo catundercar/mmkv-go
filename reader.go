@@ -406,6 +406,39 @@ func (r *Reader) GetFloat64(key string) (float64, bool) {
 	return math.Float64frombits(bits), true
 }
 
+// parseDictGreedy is the tolerant variant used for corruption recovery: it
+// replays as many well-formed pairs as it can and stops at the first malformed
+// one instead of erroring (mirrors MMKV's greedy decode on CRC failure).
+func parseDictGreedy(plain []byte) map[string][]byte {
+	m := make(map[string][]byte)
+	ci := newCodedInput(plain)
+	if ci.atEnd() {
+		return m
+	}
+	if _, err := ci.readVarint64(); err != nil {
+		return m
+	}
+	for !ci.atEnd() {
+		key, err := ci.readBytes()
+		if err != nil {
+			break
+		}
+		if len(key) == 0 {
+			continue
+		}
+		val, err := ci.readBytes()
+		if err != nil {
+			break
+		}
+		if len(val) > 0 {
+			m[string(key)] = val
+		} else {
+			delete(m, string(key))
+		}
+	}
+	return m
+}
+
 // parseDict replays the append log into a last-write-wins map. Value slices are
 // views into plain. Mirrors MiniPBCoder::decodeOneMap (MiniPBCoder.cpp:504).
 func parseDict(plain []byte) (map[string][]byte, error) {
