@@ -202,6 +202,11 @@ func (m *MMKV) ClearAll() error {
 		return ErrClosed
 	}
 	m.checkLoadData()
+	return m.clearAllLocked()
+}
+
+// clearAllLocked is the body of ClearAll; caller holds the exclusive lock.
+func (m *MMKV) clearAllLocked() error {
 	if err := m.data.truncate(0); err != nil { // page-rounded floor = one page
 		return err
 	}
@@ -218,6 +223,41 @@ func (m *MMKV) ClearAll() error {
 	m.info.lastCRCDigest = 0
 	copy(m.meta.memory(), m.info.marshal())
 	if err := m.data.msync(true); err != nil {
+		return err
+	}
+	return m.meta.msync(true)
+}
+
+// Trim compacts the store (a full write-back) and then shrinks the data file
+// toward ~2x the live size, floored at one page — matching MMKV's trim().
+func (m *MMKV) Trim() error {
+	m.lockExclusive()
+	defer m.unlockExclusive()
+	if m.closed {
+		return ErrClosed
+	}
+	m.checkLoadData()
+	if m.actualSize == 0 {
+		return m.clearAllLocked()
+	}
+	if err := m.fullWriteback(); err != nil { // compact (also bumps the sequence)
+		return err
+	}
+	floor := pageRoundUp(0)
+	target := m.data.fileSize()
+	for target > (int(m.actualSize)+4)*2 {
+		target /= 2
+	}
+	if target < floor {
+		target = floor
+	}
+	if target >= m.data.fileSize() {
+		return nil // already tight
+	}
+	if err := m.data.truncate(target); err != nil { // remaps: invalidates dict views
+		return err
+	}
+	if err := m.decodeRegion(m.actualSize, m.crcDigest); err != nil { // rebuild views into the new mapping
 		return err
 	}
 	return m.meta.msync(true)
