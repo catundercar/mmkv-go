@@ -13,7 +13,7 @@ r, err := mmkv.Open("/path/to/mmkv/dir", "myID")
 if err != nil { /* fall back to the cgo library */ }
 defer r.Close()
 
-v, ok := r.GetBytes("key")   // []byte view into an mmap'd buffer, zero-copy
+v, ok := r.GetBytes("key")   // []byte view into the reader's buffer, zero-copy
 n, ok := r.GetInt32("count")
 s, ok := r.GetString("name")
 ```
@@ -40,6 +40,30 @@ The headline guarantee is **`cgo.Get(k) == purego.Get(k)`**: a value written by
 the official library reads back identically through this package. CI enforces
 this per MMKV version × architecture (`harness/equiv_test.go`), so a format
 change in any MMKV release that breaks the pure-Go reader turns the build red.
+
+## Compatibility
+
+CI verifies the `cgo.Get(k) == purego.Get(k)` guarantee for files written by the
+official library across the latest tag of each MMKV release line, on both **amd64**
+and **arm64** (native runners):
+
+| MMKV line | tested tag | note |
+|---|---|---|
+| v1.2.x | `v1.2.16` | earliest line tested |
+| v1.3.x | `v1.3.16` | format v4 / key expiration introduced |
+| v2.0.x | `v2.0.2` | |
+| v2.1.x | `v2.1.1` | namespace |
+| v2.2.x | `v2.2.4` | |
+| v2.3.x | `v2.3.0` | AES-256 |
+| v2.4.x | `v2.4.0` | latest |
+
+On-disk **format versions 0–4** are supported. The format has been stable at v4
+since v1.3.0, so files from current MMKV releases read correctly; a future format
+bump surfaces as `ErrUnsupportedVersion` (never silent corruption) and turns the CI
+differential red. Encryption (AES-CFB-128/256) and key expiration are
+differential-tested on `v2.4.0`; their on-disk format is version-stable.
+
+**Requires** Go 1.21+ and a POSIX OS (Linux/macOS).
 
 ## Layout
 
