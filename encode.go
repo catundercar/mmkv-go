@@ -101,6 +101,35 @@ func stringBlob(s string) []byte   { return bytesBlob([]byte(s)) }
 // fine for plaintext; encryption (later) wants it randomized.
 const itemSizeHolder = 0x200000
 
+// stringSliceBlob encodes a []string as MMKV's vector<string> value: a
+// length-delimited buffer of repeated writeString entries. MMKV's decodeOneVector
+// reads a leading aggregate-size varint then loops readString to the end; that
+// aggregate size equals the byte length of the concatenated entries, so the blob
+// is exactly writeData(concat(writeData(s))) — structurally a length-delimited
+// payload (MiniPBCoder vector encode/decode).
+func stringSliceBlob(v []string) []byte {
+	items := &codedOutput{}
+	for _, s := range v {
+		items.writeData([]byte(s))
+	}
+	return bytesBlob(items.bytes())
+}
+
+// decodeStringSlice parses the inner items buffer (concatenated writeString
+// entries) back into a []string. Best-effort: stops at the first malformed entry.
+func decodeStringSlice(items []byte) []string {
+	ci := newCodedInput(items)
+	out := []string{}
+	for !ci.atEnd() {
+		s, err := ci.readBytes()
+		if err != nil {
+			break
+		}
+		out = append(out, string(s))
+	}
+	return out
+}
+
 // encodeRegion builds the KV-log region: the leading 4-byte placeholder followed
 // by each pair as writeData(key) + writeData(valueBlob), in order. This is the
 // inverse of reader.go's parseDict.

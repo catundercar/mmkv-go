@@ -21,6 +21,11 @@ func (m *MMKV) SetFloat64(key string, v float64) error { return m.setValue(key, 
 func (m *MMKV) SetString(key, v string) error          { return m.setValue(key, stringBlob(v)) }
 func (m *MMKV) SetBytes(key string, v []byte) error    { return m.setValue(key, bytesBlob(v)) }
 
+// SetStringSlice stores a []string (MMKV's vector<string>).
+func (m *MMKV) SetStringSlice(key string, v []string) error {
+	return m.setValue(key, stringSliceBlob(v))
+}
+
 func (m *MMKV) setValue(key string, blob []byte) error {
 	m.lockExclusive()
 	defer m.unlockExclusive()
@@ -31,6 +36,13 @@ func (m *MMKV) setValue(key string, blob []byte) error {
 		return ErrReadOnly
 	}
 	m.checkLoadData()
+	return m.setValueLocked(key, blob)
+}
+
+// setValueLocked applies compareBeforeSet + expiration then writes. Caller holds
+// the exclusive lock and has already rejected closed/read-only and run
+// checkLoadData.
+func (m *MMKV) setValueLocked(key string, blob []byte) error {
 	// compareBeforeSet (mutually exclusive with expiration): skip a redundant
 	// write when the stored value already equals the new one.
 	if m.compareBeforeSet && !m.enableExpire {
@@ -42,6 +54,49 @@ func (m *MMKV) setValue(key string, blob []byte) error {
 		blob = appendExpire(blob, m.expiredSeconds)
 	}
 	return m.setBlob(key, blob)
+}
+
+// ImportFrom copies every live key from src into this instance (applying this
+// instance's expiration/compareBeforeSet policy), returning the number of keys
+// imported. src is snapshotted under its own lock first, then written here, so
+// two instances importing from each other can't deadlock.
+func (m *MMKV) ImportFrom(src *MMKV) (int, error) {
+	if src == nil || src == m {
+		return 0, nil
+	}
+	src.lockShared()
+	if src.closed {
+		src.unlockShared()
+		return 0, ErrClosed
+	}
+	src.checkLoadData()
+	keys := make([]string, 0, len(src.dict))
+	vals := make([][]byte, 0, len(src.dict))
+	for k := range src.dict {
+		if v, ok := src.value(k); ok { // value() strips any expire timestamp
+			keys = append(keys, k)
+			vals = append(vals, append([]byte(nil), v...))
+		}
+	}
+	src.unlockShared()
+
+	m.lockExclusive()
+	defer m.unlockExclusive()
+	if m.closed {
+		return 0, ErrClosed
+	}
+	if m.readOnly {
+		return 0, ErrReadOnly
+	}
+	m.checkLoadData()
+	n := 0
+	for i, k := range keys {
+		if err := m.setValueLocked(k, vals[i]); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // setBlob appends the pair when it fits the free tail (MMKV's append fast path);

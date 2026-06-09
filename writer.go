@@ -52,6 +52,9 @@ func (w *Writer) SetFloat32(key string, v float32) *Writer { return w.set(key, f
 func (w *Writer) SetFloat64(key string, v float64) *Writer { return w.set(key, float64Blob(v)) }
 func (w *Writer) SetString(key, v string) *Writer          { return w.set(key, stringBlob(v)) }
 func (w *Writer) SetBytes(key string, v []byte) *Writer    { return w.set(key, bytesBlob(v)) }
+func (w *Writer) SetStringSlice(key string, v []string) *Writer {
+	return w.set(key, stringSliceBlob(v))
+}
 
 // Flush writes the data file and its ".crc" meta to disk via a full write-back,
 // then msyncs both (data first, then meta — the order MMKV relies on for crash

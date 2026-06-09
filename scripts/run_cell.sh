@@ -41,13 +41,14 @@ endgroup
 
 group "gate: functional equivalence (cgo ≡ purego, version $TAG)"
 # Base (all versions): C++ writes → both the read-only Reader and the read+write
-# MMKV read back identically.
-RUN='TestCgoEqualsPurego|TestCgoWriteMMKVReads'
+# MMKV read back identically; plus a C++ Core (libcore.a) vector<string> read
+# (the Go cgo binding doesn't expose vectors).
+RUN='TestCgoEqualsPurego|TestCgoWriteMMKVReads|TestVectorCppToGo'
 # Go writes → C++ reads: the writer emits on-disk format version 4 (Flag), which
 # MMKV reads from v1.3.0 on, so gate these off the pre-Flag v1.2.x line.
 case "$TAG" in
 v1.2.*) ;;
-*) RUN="$RUN|TestPuregoWriteCgoReads|TestMMKVWriteCgoReads" ;;
+*) RUN="$RUN|TestPuregoWriteCgoReads|TestMMKVWriteCgoReads|TestVectorGoToCpp" ;;
 esac
 # v2.4.x has the unified MMKVWithIDAndConfig API → also run the encrypted /
 # expiration differentials in BOTH directions (build-tagged mmkvconfig). Older

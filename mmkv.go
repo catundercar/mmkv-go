@@ -615,6 +615,54 @@ func (m *MMKV) GetStringCopy(key string) (string, bool) {
 	return string(v), true
 }
 
+// GetStringSlice returns the value as a []string (MMKV's vector<string>). The
+// strings are copies, so the result outlives the next call.
+func (m *MMKV) GetStringSlice(key string) ([]string, bool) {
+	m.lockShared()
+	defer m.unlockShared()
+	if m.closed {
+		return nil, false
+	}
+	m.checkLoadData()
+	items, ok := m.bytesValue(key)
+	if !ok {
+		return nil, false
+	}
+	return decodeStringSlice(items), true
+}
+
+// GetValueSize returns the number of stored value bytes for key (the encoded
+// value, expire timestamp stripped), or -1 if absent.
+func (m *MMKV) GetValueSize(key string) int {
+	m.lockShared()
+	defer m.unlockShared()
+	if m.closed {
+		return -1
+	}
+	m.checkLoadData()
+	v, ok := m.value(key)
+	if !ok {
+		return -1
+	}
+	return len(v)
+}
+
+// WriteValueToBuffer copies the stored value bytes for key into buf and returns
+// the number copied, or -1 if the key is absent or buf is too small.
+func (m *MMKV) WriteValueToBuffer(key string, buf []byte) int {
+	m.lockShared()
+	defer m.unlockShared()
+	if m.closed {
+		return -1
+	}
+	m.checkLoadData()
+	v, ok := m.value(key)
+	if !ok || len(buf) < len(v) {
+		return -1
+	}
+	return copy(buf, v)
+}
+
 // Contains reports whether key is present.
 func (m *MMKV) Contains(key string) bool {
 	m.lockShared()
