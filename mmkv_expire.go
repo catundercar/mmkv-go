@@ -37,6 +37,7 @@ func (m *MMKV) EnableAutoKeyExpire(seconds uint32) error {
 	wasEnabled := m.enableExpire
 	m.expiredSeconds = seconds
 	m.enableExpire = true
+	m.compareBeforeSet = false // mutually exclusive (matches MMKV)
 	m.info.flags |= flagEnableExpire
 
 	if !wasEnabled {

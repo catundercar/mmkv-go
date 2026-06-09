@@ -3,6 +3,7 @@
 package mmkv
 
 import (
+	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"sort"
@@ -27,6 +28,13 @@ func (m *MMKV) setValue(key string, blob []byte) error {
 		return ErrClosed
 	}
 	m.checkLoadData()
+	// compareBeforeSet (mutually exclusive with expiration): skip a redundant
+	// write when the stored value already equals the new one.
+	if m.compareBeforeSet && !m.enableExpire {
+		if old, ok := m.dict[key]; ok && bytes.Equal(old, blob) {
+			return nil
+		}
+	}
 	if m.enableExpire {
 		blob = appendExpire(blob, m.expiredSeconds)
 	}

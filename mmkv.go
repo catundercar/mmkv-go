@@ -55,6 +55,8 @@ type MMKV struct {
 
 	enableExpire   bool   // values carry a trailing 4-byte expire timestamp
 	expiredSeconds uint32 // default per-set duration; 0 = never (in-memory only)
+
+	compareBeforeSet bool // skip a write when the new value equals the stored one (in-memory only)
 }
 
 type mmkvConfig struct {
