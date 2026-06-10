@@ -57,6 +57,14 @@ type MMKV struct {
 	closed     bool
 	lastErr    error
 
+	// needFullWriteback: the on-disk region failed its CRC and was salvaged
+	// (greedy decode), so the running crcDigest is poisoned — incremental
+	// appends would persist a wrong CRC. The next write must be a full
+	// write-back (MMKV's checkDataValid sets needFullWriteback on
+	// OnErrorRecover and rewrites at load; we also repair at open and route
+	// later writes off the fast paths until a rewrite lands).
+	needFullWriteback bool
+
 	enableExpire   bool   // values carry a trailing 4-byte expire timestamp
 	expiredSeconds uint32 // default per-set duration; 0 = never (in-memory only)
 
@@ -107,8 +115,10 @@ func WithContentChangedHandler(fn func()) MMKVOption {
 
 // WithRecoverOnError salvages as much as possible (greedy decode) when the data
 // region fails its CRC and the last-confirmed snapshot can't be restored either,
-// instead of discarding to empty. The salvaged state is served read-only and
-// rewritten cleanly on the next write.
+// instead of discarding to empty (MMKV's OnErrorRecover). A writable open then
+// repairs the store immediately with a full write-back; a salvage during a
+// cross-process reload is repaired by the next write. Read-only instances just
+// serve the salvaged view.
 func WithRecoverOnError() MMKVOption {
 	return func(c *mmkvConfig) { c.recover = true }
 }
@@ -194,7 +204,21 @@ func (m *MMKV) open() error {
 	m.data = data
 	m.meta = meta
 	m.fl = newFileLock(meta.f)
-	return m.loadData()
+	if err := m.loadData(); err != nil {
+		return err
+	}
+	// Repair a salvaged store right away, like MMKV's OnErrorRecover load
+	// (loadFromFile runs a fullWriteback when checkDataValid flags it): rewrite
+	// region+meta from the salvaged dict so the on-disk CRC is consistent again
+	// before any append, and bump the sequence so other processes clean-reload.
+	if m.needFullWriteback {
+		if m.multiProcess {
+			_ = m.fl.lock(exclusiveLock)
+			defer func() { _ = m.fl.unlock(exclusiveLock) }()
+		}
+		return m.fullWriteback()
+	}
+	return nil
 }
 
 // ---- locking (process flock is a no-op in single-process mode) ----
@@ -324,8 +348,11 @@ func (m *MMKV) loadData() error {
 }
 
 // salvage greedily decodes a corrupt region (clamped to the file) into dict,
-// keeping the meta-derived size/crc so a multi-process reload doesn't loop. The
-// next write recomputes a correct CRC.
+// keeping the meta-derived size/crc so a multi-process reload doesn't loop, and
+// flags needFullWriteback: a writable open repairs the store immediately
+// (MMKV's OnErrorRecover load does a fullWriteback); a salvage during a
+// runtime reload is repaired by the next write instead (which may only hold a
+// shared flock here, so it cannot rewrite in place).
 func (m *MMKV) salvage() error {
 	fileSize := len(m.data.memory())
 	actual := m.info.actualSize
@@ -346,6 +373,7 @@ func (m *MMKV) salvage() error {
 	m.dict = parseDictGreedy(plain)
 	m.actualSize = m.info.actualSize
 	m.crcDigest = m.info.crcDigest
+	m.needFullWriteback = true
 	return nil
 }
 

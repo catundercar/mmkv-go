@@ -110,6 +110,12 @@ func (m *MMKV) setBlob(key string, blob []byte) error {
 	o.writeData(blob)
 	pair := o.bytes()
 
+	// Both fast paths below write incrementally in place, which is only sound
+	// when the running CRC matches the on-disk bytes — a salvaged store
+	// (needFullWriteback, see salvage) must take the full write-back instead,
+	// like MMKV's OnErrorRecover load.
+	fastOK := m.crypt == nil && !m.needFullWriteback && m.info.version >= versionFlag
+
 	// Single-key override fast path (MMKV >=1.3.x setDataForKey, the
 	// onlyOneKey/needOverride branches): in single-process mode, when this key is
 	// the only live one — or every key was removed but stale bytes remain — and
@@ -118,7 +124,7 @@ func (m *MMKV) setBlob(key string, blob []byte) error {
 	// fill the file, so they never trigger the periodic full write-back and its
 	// msync. C++ keeps appending in multi-process mode (a rewound tail would race
 	// other processes), and encrypted sets stay on the full write-back below.
-	if m.crypt == nil && !m.multiProcess && m.info.version >= versionFlag &&
+	if fastOK && !m.multiProcess &&
 		4+len(itemSizeHolderBytes)+len(pair) <= m.data.fileSize() {
 		_, ok := m.dict[key]
 		if (ok && len(m.dict) == 1) || (wasEmpty && m.actualSize > 0) {
@@ -132,7 +138,7 @@ func (m *MMKV) setBlob(key string, blob []byte) error {
 	// full write-back (correct and simple; incremental encrypted append is a
 	// future optimization).
 	spaceLeft := m.data.fileSize() - 4 - int(m.actualSize)
-	if m.crypt == nil && len(pair) <= spaceLeft && len(m.dict) > 0 && m.info.version >= versionFlag {
+	if fastOK && len(pair) <= spaceLeft && len(m.dict) > 0 {
 		p := 4 + int(m.actualSize)
 		m.appendRaw(pair)
 		blobStart := p + (len(pair) - len(blob))
@@ -273,6 +279,7 @@ func (m *MMKV) fullWritebackGrow(needSync bool, incoming int) error {
 		return err
 	}
 	m.dict = dict
+	m.needFullWriteback = false // region+meta rewritten from scratch: consistent again
 
 	if !needSync {
 		return nil
@@ -305,7 +312,10 @@ func (m *MMKV) RemoveValueForKey(key string) error {
 	o.writeData(nil) // empty value = deletion marker
 	tomb := o.bytes()
 	spaceLeft := m.data.fileSize() - 4 - int(m.actualSize)
-	if len(tomb) <= spaceLeft && m.info.version >= versionFlag && m.actualSize > 0 {
+	// a salvaged store (needFullWriteback) rewrites instead of appending — its
+	// running CRC is poisoned (see setBlob)
+	if len(tomb) <= spaceLeft && m.info.version >= versionFlag && m.actualSize > 0 &&
+		!m.needFullWriteback {
 		m.appendRaw(tomb)
 		return nil
 	}
@@ -368,6 +378,7 @@ func (m *MMKV) clearAllLocked() error {
 	m.info.lastActualSize = 0
 	m.info.lastCRCDigest = 0
 	copy(m.meta.memory(), m.info.marshal())
+	m.needFullWriteback = false // empty region + fresh meta: consistent again
 	if err := m.data.msync(true); err != nil {
 		return err
 	}
