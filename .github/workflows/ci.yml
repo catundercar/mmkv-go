@@ -38,8 +38,8 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.23"
       - name: install toolchain
@@ -52,7 +52,7 @@ jobs:
           CC: gcc-12
           CXX: g++-12
         run: bash scripts/run_cell.sh "${{ matrix.version }}" "${{ matrix.arch }}" "${{ github.event.inputs.benchtime || '1s' }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: results-${{ matrix.version }}-${{ matrix.arch }}
@@ -65,15 +65,15 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           path: all
           pattern: results-*
           merge-multiple: true
       - name: aggregate -> job summary
         run: python3 scripts/aggregate.py all >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: all-results
           path: all/
