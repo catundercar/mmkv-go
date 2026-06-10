@@ -1,30 +1,34 @@
 # mmkv-go
 
-A **cgo-free** implementation of [Tencent MMKV](https://github.com/Tencent/MMKV)
-for Go: a zero-copy read-only `Reader` plus a full read+write `MMKV` type. Both
-speak the official on-disk format and flock protocol, so they interoperate with
-the C++ library over the same files — without ever crossing the cgo boundary
-(reads are an order of magnitude faster than the official Go binding and
-allocate nothing on the view paths).
+A **cgo-free, full read+write** implementation of
+[Tencent MMKV](https://github.com/Tencent/MMKV) for Go — not just a reader. The
+`MMKV` type writes and reads the official on-disk format and speaks the same
+flock protocol, so it shares files with the C++ library across processes; a
+specialized zero-copy `Reader` covers read-only consumers. Nothing crosses the
+cgo boundary: reads are an order of magnitude faster than the official Go
+binding (zero allocs on the view paths) and small writes beat it too (no
+per-call cgo overhead).
 
 ```go
 import "github.com/catundercar/mmkv-go"
 
-// read-only, zero-copy (lock-free reads):
+// read+write — MMKV semantics end to end: append fast path, single-key
+// override, periodic compaction; add mmkv.WithMultiProcess() to share the
+// file with other processes (Go or C++):
+m, err := mmkv.MMKVWithID("/path/to/mmkv/dir", "myID")
+if err != nil { /* ... */ }
+defer m.Close()
+_ = m.SetString("name", "value")
+_ = m.SetInt32("count", 42)
+s, ok := m.GetString("name")
+_ = m.Sync() // durable msync, like MMKV's sync(MMKV_SYNC)
+
+// read-only, zero-copy, lock-free reads (e.g. a metrics/inspector sidecar):
 r, err := mmkv.Open("/path/to/mmkv/dir", "myID")
 // encrypted: mmkv.Open(dir, id, mmkv.WithEncryption([]byte(cryptKey)))
 if err != nil { /* ... */ }
 defer r.Close()
 v, ok := r.GetBytes("key")   // []byte view into the reader's buffer, zero-copy
-n, ok := r.GetInt32("count")
-
-// read+write (MMKV semantics: append fast path, single-key override,
-// periodic compaction; multi-process via flock with WithMultiProcess()):
-m, err := mmkv.MMKVWithID(dir, "myID")
-if err != nil { /* ... */ }
-defer m.Close()
-_ = m.SetString("name", "value")
-s, ok := m.GetString("name")
 ```
 
 Freshness is transparent (like MMKV C++): each read cheaply checks the writer's
@@ -32,16 +36,33 @@ change canary in the mmap'd `.crc` and reloads only when something changed.
 Cross-process single-writer + multi-reader is gated in CI with the writer on
 either side (cgo or pure Go).
 
+## Features
+
+- **Typed key-values:** `bool`, `int32/64`, `uint32/64`, `float32/64`, `string`,
+  `[]byte`, `[]string` (MMKV's `vector<string>`); zero-copy `GetBytes`/`GetString`
+  views plus `*Copy` variants; `GetValueSize`/`WriteValueToBuffer` introspection.
+- **MMKV write semantics, faithfully:** append fast path with incremental CRC,
+  single-key override (MMKV ≥1.3.x), periodic compaction with future-usage
+  headroom (`expandAndWriteBack`), `Trim`, `ClearAll`, durable `Sync` / async
+  `Async`.
+- **Cross-process:** `WithMultiProcess` flock interlock (shared reads,
+  exclusive writes), transparent reload, public `Lock`/`TryLock`/`Unlock`,
+  content-changed handler.
+- **Encryption:** AES-CFB-128/256 (`WithCryptKey`, width follows key length,
+  like MMKV), `ReKey` (plaintext ↔ encrypted, key rotation), fresh random IV
+  per write-back; the Reader also accepts a custom `Decryptor`.
+- **Key expiration:** `EnableAutoKeyExpire`/`DisableAutoKeyExpire`; expired keys
+  read as absent, both here and in C++.
+- **Recovery & safety:** last-confirmed snapshot rollback on torn writes,
+  `WithRecoverOnError` salvage with an immediate repair write-back,
+  `WithReadOnly` mode, `EnableCompareBeforeSet`.
+- **Management:** `NameSpace`, `ImportFrom`, `BackupOne`/`RestoreOneFromDirectory`/
+  `RemoveStorage`/`CheckExist`/`IsFileValid`, `Count`/`AllKeys`/`Contains`/
+  `TotalSize`/`ActualSize`, `ClearMemoryCache`.
+
 ## Scope
 
-- **Supported:** read and write, plaintext or AES-CFB-128/256, key expiration,
-  multi-process (flock interlock, `WithMultiProcess`), read-only mode,
-  namespaces, backup/restore, `ImportFrom`, `[]string` values, compareBeforeSet,
-  content-changed handler, corruption recovery (`WithRecoverOnError`). POSIX
-  (Linux/macOS) only.
-- **Encryption:** width follows key length, like MMKV (`WithCryptKey` /
-  `WithEncryption`); the Reader also takes a custom `Decryptor`.
-- **Key expiration:** decoded and filtered transparently (expired keys read as absent).
+- **Platform:** POSIX (Linux/macOS), Go 1.23+.
 - **Out of scope:** Windows and Android-specific backends (ashmem); anything
   not listed above — the official cgo library remains the reference for those.
 
@@ -88,7 +109,7 @@ version-stable.
 
 ```
 .                      pure-Go library (package mmkv) + unit tests + testdata/
-doc/                   DESIGN.md, BENCHMARK.md
+doc/                   DESIGN.md, MMKV_FULL_DESIGN.md, BENCHMARK.md (+ zh-CN)
 harness/               cgo module: cgo≡purego gate, -race concurrency, 3-way Go bench
 cpp/                   native C++ baseline (bench_cpp.cpp, build.sh)
 tools/gen/             cgo module: regenerate testdata fixtures
