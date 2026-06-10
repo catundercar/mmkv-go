@@ -83,9 +83,10 @@ touch slower than the lock-free Reader but still far ahead of cgo:
 Writes are new — the project previously benchmarked cgo writes only:
 
 - `SetInt32` (append fast path): about **1.5× faster than cgo** (no cgo boundary).
-- `SetBytes` 4 KB: about **2× slower than cgo** — when an append fills the page,
-  the full write-back rebuilds the region into a fresh buffer and msyncs
-  (MS_SYNC). Incremental in-place rewrite is a future optimization.
+- `SetBytes` 4 KB: **on par with cgo** (~1× locally). Space-triggered write-backs
+  grow the file with MMKV's future-usage headroom (~8 average items,
+  `expandAndWriteBack`), so repeated large sets amortize into appends — about
+  one write-back (+ msync) per ~7 sets instead of one per set.
 
 Trust the CI job summary's per-version × arch tables for absolute numbers.
 

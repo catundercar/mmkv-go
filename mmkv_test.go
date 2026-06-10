@@ -181,6 +181,44 @@ func TestMMKVOverwriteRemoveClear(t *testing.T) {
 	}
 }
 
+// TestMMKVWritebackHeadroom pins the futureUsage growth policy (MMKV's
+// expandAndWriteBack): a space-triggered write-back grows the file with
+// headroom for ~8 average items, so repeated large sets amortize into appends —
+// only a few sequence bumps across many sets, instead of one write-back per
+// set. Page-size-agnostic (the first write-back may skip growth on 16K-page
+// systems, exactly like C++ when lenNeeded < fileSize).
+func TestMMKVWritebackHeadroom(t *testing.T) {
+	dir := t.TempDir()
+	m, err := MMKVWithID(dir, "headroom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	big := make([]byte, 4096)
+	for i := range big {
+		big[i] = byte(i)
+	}
+	const sets = 12
+	for i := 0; i < sets; i++ {
+		big[0] = byte(i)
+		if err := m.SetBytes("big", big); err != nil {
+			t.Fatalf("set %d: %v", i, err)
+		}
+	}
+	// Without headroom every 4K set is a write-back (sequence ≈ sets). With it,
+	// write-backs amortize to roughly one per ~7 sets after growth.
+	if seq := m.info.sequence; seq > 4 {
+		t.Fatalf("sequence=%d after %d sets: write-backs are not amortizing", seq, sets)
+	}
+	if m.TotalSize() < 32768 { // grew with multi-item headroom
+		t.Fatalf("no headroom: TotalSize=%d", m.TotalSize())
+	}
+	if v, ok := m.GetBytes("big"); !ok || v[0] != sets-1 || len(v) != 4096 {
+		t.Fatalf("value wrong after appends: ok=%v len=%d v0=%d", ok, len(v), v[0])
+	}
+}
+
 func TestMMKVRegistrySharesInstance(t *testing.T) {
 	dir := t.TempDir()
 	a, err := MMKVWithID(dir, "reg")

@@ -102,6 +102,7 @@ func (m *MMKV) ImportFrom(src *MMKV) (int, error) {
 // setBlob appends the pair when it fits the free tail (MMKV's append fast path);
 // otherwise it compacts via a full write-back. Caller holds the exclusive lock.
 func (m *MMKV) setBlob(key string, blob []byte) error {
+	wasEmpty := len(m.dict) == 0
 	o := &codedOutput{}
 	o.writeData([]byte(key))
 	o.writeData(blob)
@@ -120,7 +121,7 @@ func (m *MMKV) setBlob(key string, blob []byte) error {
 		return nil
 	}
 	m.dict[key] = blob // a fresh heap blob; replaced by an mmap view after the rewrite
-	return m.fullWriteback()
+	return m.fullWritebackGrow(!wasEmpty, len(pair))
 }
 
 // appendRaw writes pair at the free tail, advances actualSize, updates the
@@ -143,7 +144,16 @@ func (m *MMKV) appendRaw(pair []byte) {
 // growing the file first if needed, then writes the full meta with a bumped
 // sequence and an advanced last-confirmed point, and msyncs. Caller holds the
 // exclusive lock.
-func (m *MMKV) fullWriteback() error {
+func (m *MMKV) fullWriteback() error { return m.fullWritebackGrow(true, 0) }
+
+// fullWritebackGrow is fullWriteback with MMKV's ensureMemorySize semantics.
+// needSync: the very first insert into an empty dict skips the msync
+// (ensureMemorySize passes needSync = !dic.empty()); every other write-back
+// syncs. incoming: the byte size of the pair that triggered this write-back
+// (0 for non-set callers like ReKey/expire) — it feeds the future-usage
+// headroom term exactly like C++'s `newSize` (which is counted on top of the
+// dict even for a same-key update).
+func (m *MMKV) fullWritebackGrow(needSync bool, incoming int) error {
 	keys := make([]string, 0, len(m.dict))
 	for k := range m.dict {
 		keys = append(keys, k)
@@ -168,12 +178,31 @@ func (m *MMKV) fullWriteback() error {
 		m.info.iv = iv
 	}
 
-	if 4+len(payload) > m.data.fileSize() {
+	// Growth with future-usage headroom (MMKV's expandAndWriteBack,
+	// MMKV_IO.cpp:512): size for ~max(8, n/2) more average-sized items, not just
+	// the current dict, so repeated sets amortize into appends instead of a full
+	// write-back per set. File size is local policy — readers use actualSize and
+	// ignore the free tail, so interop is unaffected. Non-set callers
+	// (incoming == 0) grow to exact fit only, like C++ (their write-backs never
+	// pass through ensureMemorySize).
+	lenNeeded := 4 + len(payload) + incoming
+	target := lenNeeded
+	grow := lenNeeded >= m.data.fileSize()
+	if incoming > 0 {
+		laterDicCount := max(1, len(m.dict)+1)
+		avgItemSize := (lenNeeded + laterDicCount - 1) / laterDicCount
+		futureUsage := avgItemSize * max(8, laterDicCount/2)
+		target = lenNeeded + futureUsage
+		if needSync && target >= m.data.fileSize() {
+			grow = true
+		}
+	}
+	if grow {
 		newSize := m.data.fileSize()
 		if newSize < 1 {
 			newSize = 1
 		}
-		for 4+len(payload) >= newSize { // double until it fits (page-rounded by truncate)
+		for target >= newSize { // double until headroom fits (page-rounded by truncate)
 			newSize *= 2
 		}
 		if err := m.data.truncate(newSize); err != nil {
@@ -206,6 +235,9 @@ func (m *MMKV) fullWriteback() error {
 	}
 	m.dict = dict
 
+	if !needSync {
+		return nil
+	}
 	if err := m.data.msync(true); err != nil {
 		return err
 	}

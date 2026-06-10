@@ -68,7 +68,7 @@ cgo 写进程（`MMKV_MULTI_PROCESS`）狂写 + 纯 Go 读（默认透明刷新�
 写是新增的（此前只基准了 cgo 写）：
 
 - `SetInt32`（append 快路径）：约 **1.5× 快于 cgo**（无 cgo 边界）。
-- `SetBytes` 4 KB：约 **2× 慢于 cgo** —— append 填满一页时，full write-back 把区重建进新缓冲并 msync（MS_SYNC）。增量原地重写为后续优化。
+- `SetBytes` 4 KB：**与 cgo 持平**（本地 ~1×）。空间触发的 write-back 按 MMKV 的 future-usage 余量扩容（约 8 个平均项，`expandAndWriteBack`），重复大值写摊销为 append —— 约每 ~7 次 set 一次 write-back（+ msync），而非每次都全量重写。
 
 绝对数字以 CI job summary 的 版本 × 架构 表为准。
 
