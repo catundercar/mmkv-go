@@ -99,14 +99,33 @@ func (m *MMKV) ImportFrom(src *MMKV) (int, error) {
 	return n, nil
 }
 
-// setBlob appends the pair when it fits the free tail (MMKV's append fast path);
-// otherwise it compacts via a full write-back. Caller holds the exclusive lock.
+// setBlob writes key=blob the cheapest way MMKV allows: a single-key store in
+// single-process mode rewrites the region from its start (override fast path),
+// anything else appends the pair when it fits the free tail, and otherwise it
+// compacts via a full write-back. Caller holds the exclusive lock.
 func (m *MMKV) setBlob(key string, blob []byte) error {
 	wasEmpty := len(m.dict) == 0
 	o := &codedOutput{}
 	o.writeData([]byte(key))
 	o.writeData(blob)
 	pair := o.bytes()
+
+	// Single-key override fast path (MMKV >=1.3.x setDataForKey, the
+	// onlyOneKey/needOverride branches): in single-process mode, when this key is
+	// the only live one — or every key was removed but stale bytes remain — and
+	// the pair fits the file as-is (checkSizeForOverride), rewrite the region
+	// from its start instead of appending. Repeated sets of one key then never
+	// fill the file, so they never trigger the periodic full write-back and its
+	// msync. C++ keeps appending in multi-process mode (a rewound tail would race
+	// other processes), and encrypted sets stay on the full write-back below.
+	if m.crypt == nil && !m.multiProcess && m.info.version >= versionFlag &&
+		4+len(itemSizeHolderBytes)+len(pair) <= m.data.fileSize() {
+		_, ok := m.dict[key]
+		if (ok && len(m.dict) == 1) || (wasEmpty && m.actualSize > 0) {
+			m.overrideRaw(key, pair, len(blob))
+			return nil
+		}
+	}
 
 	// The append fast path writes plaintext bytes in place; with encryption the
 	// region is a single CFB stream, so an encrypted set always re-encrypts via a
@@ -138,6 +157,26 @@ func (m *MMKV) appendRaw(pair []byte) {
 	meta := m.meta.memory()
 	binary.LittleEndian.PutUint32(meta[offCRC:], m.crcDigest)
 	binary.LittleEndian.PutUint32(meta[offActualSize:], m.actualSize)
+}
+
+// overrideRaw rewrites the region from its start as [itemSizeHolder][pair],
+// dropping every prior append: actualSize and the running CRC restart from the
+// fresh region, and only crc+actualSize are written to the meta — sequence
+// kept, no msync (MMKV's doOverrideDataWithKey + recalculateCRCDigestOnly).
+// Caller holds the lock and has checked the pair fits the file.
+func (m *MMKV) overrideRaw(key string, pair []byte, blobLen int) {
+	mem := m.data.memory()
+	p := 4 + copy(mem[4:], itemSizeHolderBytes)
+	copy(mem[p:], pair)
+	m.actualSize = uint32(len(itemSizeHolderBytes) + len(pair))
+	m.crcDigest = crc32.ChecksumIEEE(mem[4 : 4+int(m.actualSize)])
+	m.info.actualSize = m.actualSize
+	m.info.crcDigest = m.crcDigest
+	meta := m.meta.memory()
+	binary.LittleEndian.PutUint32(meta[offCRC:], m.crcDigest)
+	binary.LittleEndian.PutUint32(meta[offActualSize:], m.actualSize)
+	blobStart := p + (len(pair) - blobLen)
+	m.dict[key] = mem[blobStart : blobStart+blobLen]
 }
 
 // fullWriteback re-packs the whole dict from offset 4 (fresh ItemSizeHolder),

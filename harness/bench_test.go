@@ -227,7 +227,11 @@ func BenchmarkString_MMKVView(b *testing.B) {
 	}
 }
 
-// ---- writes: cgo vs pure-Go MMKV (append fast path + periodic full write-back) ----
+// ---- writes: cgo vs pure-Go MMKV ----
+// SetInt32 runs against a single-key store, so both sides take the single-key
+// override fast path (rewrite in place, no write-back, no msync). SetBytes4K
+// runs in a 2-key store, exercising the append fast path + periodic full
+// write-back (which msyncs) on both sides.
 
 func BenchmarkSetInt32_Cgo(b *testing.B) {
 	writeSetup(b)

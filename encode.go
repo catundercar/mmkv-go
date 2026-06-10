@@ -101,6 +101,15 @@ func stringBlob(s string) []byte   { return bytesBlob([]byte(s)) }
 // fine for plaintext; encryption (later) wants it randomized.
 const itemSizeHolder = 0x200000
 
+// itemSizeHolderBytes is itemSizeHolder's 4-byte varint encoding, written at
+// the region start by the single-key override fast path (encodeRegion emits
+// the same bytes via writeUInt32).
+var itemSizeHolderBytes = func() []byte {
+	o := &codedOutput{}
+	o.writeUInt32(itemSizeHolder)
+	return o.buf
+}()
+
 // stringSliceBlob encodes a []string as MMKV's vector<string> value: a
 // length-delimited buffer of repeated writeString entries. MMKV's decodeOneVector
 // reads a leading aggregate-size varint then loops readString to the end; that

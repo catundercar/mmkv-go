@@ -89,7 +89,8 @@ version matrix):
 - **Core**: registry (one instance per file per process), open/load with
   last-confirmed recovery, per-op locking (thread lock + shared/exclusive flock;
   disabled in single-process), checkLoadData freshness (full reload + remap /
-  incremental), the append fast path + full write-back + grow, all typed
+  incremental), the single-key override + append fast paths + full
+  write-back + grow, all typed
   Get/Set, Remove(s)/ClearAll/Trim/Count/AllKeys/Contains/TotalSize/ActualSize,
   Sync/Async.
 - **Encryption**: `WithCryptKey` (AES-128/256), encrypted full write-back with IV

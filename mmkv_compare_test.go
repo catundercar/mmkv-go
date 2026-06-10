@@ -12,6 +12,10 @@ func TestMMKVCompareBeforeSet(t *testing.T) {
 	}
 	defer m.Close()
 
+	// A second key keeps sets on the append path: with a single key the
+	// override fast path rewrites in place and ActualSize() stops being a
+	// usable "did it write" probe (same-size rewrites don't grow the region).
+	m.SetString("pad", "x")
 	m.SetString("k", "value")
 	m.EnableCompareBeforeSet()
 	if !m.IsCompareBeforeSetEnabled() {

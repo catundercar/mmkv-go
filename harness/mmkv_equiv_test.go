@@ -83,6 +83,63 @@ func TestMMKVWriteCgoReads(t *testing.T) {
 	}
 }
 
+// TestMMKVWriteCgoReadsOverride exercises the single-key override fast path
+// (repeated sets of one key rewrite the region from its start, MMKV >=1.3.x
+// semantics) and the post-remove-all override, then asserts the official C++
+// library reads the resulting file. The name extends TestMMKVWriteCgoReads so
+// the CI gate's -run pattern picks it up.
+func TestMMKVWriteCgoReadsOverride(t *testing.T) {
+	dir := ensureInit(t)
+	const id = "mmkv_override_cgo_read"
+
+	m, err := mmkv.MMKVWithID(dir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = m.ClearAll()
+	// far more sets than one page holds as appends: steady-state override
+	for i := 0; i < 5000; i++ {
+		if err := m.SetInt32("k", int32(i)); err != nil {
+			t.Fatalf("set %d: %v", i, err)
+		}
+	}
+	if err := m.Sync(); err != nil {
+		t.Fatal(err)
+	}
+
+	r := cgommkv.MMKVWithID(id)
+	if got := r.GetInt32("k"); got != 4999 {
+		t.Errorf("k = %d, want 4999", got)
+	}
+
+	// remove-all then set: the needOverride branch resets the region past the
+	// tombstones; C++ must see only the new key.
+	if err := m.SetString("gone", "tomb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveValueForKey("k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveValueForKey("gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetString("s", "after override"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+
+	r.ClearMemoryCache() // drop cgo's cached dict; reload from the file
+	if got := r.GetString("s"); got != "after override" {
+		t.Errorf("s = %q", got)
+	}
+	if r.Contains("k") || r.Contains("gone") {
+		t.Errorf("removed keys visible to cgo: k=%v gone=%v", r.Contains("k"), r.Contains("gone"))
+	}
+}
+
 // TestCgoWriteMMKVReads is the reverse: the C++ library writes, the live MMKV
 // type reads back equal.
 func TestCgoWriteMMKVReads(t *testing.T) {
