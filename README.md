@@ -60,6 +60,44 @@ either side (cgo or pure Go).
   `RemoveStorage`/`CheckExist`/`IsFileValid`, `Count`/`AllKeys`/`Contains`/
   `TotalSize`/`ActualSize`, `ClearMemoryCache`.
 
+## Performance
+
+Numbers below are from this repo's CI matrix (GitHub-hosted **native arm64**
+runner, MMKV v2.4.0 cell, Go 1.25, `go test -bench`). The pure-Go read path
+skips both the cgo boundary and the copy — a read collapses to a map lookup
+plus an mmap view — so latency is flat (~19–34 ns) **regardless of value
+size**, while the cgo binding pays the call overhead plus a copy that grows
+with the value:
+
+```mermaid
+xychart-beta
+    title "Pure-Go Reader read speedup over the official cgo binding (arm64 CI)"
+    x-axis ["GetInt32", "GetBytes 6 B", "GetString 38 B", "GetBytes 4 KB"]
+    y-axis "times faster (higher is better)" 0 --> 60
+    bar [10.2, 16.3, 16.1, 56.6]
+```
+
+| read (ns/op, arm64) | cgo binding | cgo zero-copy API | pure `Reader` (view) | pure `MMKV` type | `Reader` speedup |
+|---|--:|--:|--:|--:|--:|
+| `GetInt32`          | 215.6 |     — | **21.1** | 33.7 | **10×** |
+| `GetBytes` (6 B)    | 307.1 |     — | **18.9** |    — | **16×** |
+| `GetString` (38 B)  | 310.7 | 292.9 | **19.3** | 32.2 | **16×** |
+| `GetBytes` (4 KB)   |  1161 | 383.2 | **20.5** | 34.2 | **57×** |
+
+- Every pure-Go view read is **0 B/op, 0 allocs/op**. The cgo binding's default
+  getters copy (a 4 KB read allocates 4104 B over 2 allocs), and even its
+  zero-copy buffer API (`GetBytesBuffer`+`Destroy`) stays **15–19× behind**.
+- amd64 shows the same shape: **7× / 14× / 13× / 44×** for the four reads above.
+- When you need to retain data past the next write, the `*Copy` variants still
+  beat the cgo copy path: `GetStringCopy` 45.8 ns, 4 KB `GetBytesCopy` 848.7 ns
+  (vs 1161 ns via cgo).
+- Writes win too (no per-call cgo overhead): `SetInt32` **139 ns vs 1179 ns**
+  on arm64 (~8×), 155 ns vs 805 ns on amd64 (~5×).
+
+Full methodology, history, and the multi-process concurrency results:
+[doc/BENCHMARK.md](doc/BENCHMARK.md), plus the per-version × arch tables in
+each CI run's job summary.
+
 ## Scope
 
 - **Platform:** POSIX (Linux/macOS), Go 1.23+.
