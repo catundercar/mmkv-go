@@ -8,8 +8,8 @@ format / locking / compatibility). This library does **read-only decode** only.
 
 Target scenario (confirmed with the requester): **plaintext, single-writer /
 multi-reader** — one cgo writer process plus many pure-Go reader processes, where
-readers can safely load changes while the writer writes. Encryption is decoupled
-at the interface level and can be plugged in later.
+readers can safely load changes while the writer writes. Encryption is built in
+(AES-CFB-128/256 via `WithEncryption`), or inject a custom `Decryptor`.
 
 > **Hard requirement on the writer**: it MUST open with `MMKV_MULTI_PROCESS`.
 > Otherwise MMKV takes no cross-process lock ([MMKV.cpp:113](../MMKV/Core/MMKV.cpp))

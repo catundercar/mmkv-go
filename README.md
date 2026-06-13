@@ -1,5 +1,12 @@
 # mmkv-go
 
+> **English** · [中文](README.zh-CN.md)
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/catundercar/mmkv-go.svg)](https://pkg.go.dev/github.com/catundercar/mmkv-go)
+[![CI](https://github.com/catundercar/mmkv-go/actions/workflows/ci.yml/badge.svg)](https://github.com/catundercar/mmkv-go/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/catundercar/mmkv-go)](https://goreportcard.com/report/github.com/catundercar/mmkv-go)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A **cgo-free, full read+write** implementation of
 [Tencent MMKV](https://github.com/Tencent/MMKV) for Go — not just a reader. The
 `MMKV` type writes and reads the official on-disk format and speaks the same
@@ -35,6 +42,29 @@ Freshness is transparent (like MMKV C++): each read cheaply checks the writer's
 change canary in the mmap'd `.crc` and reloads only when something changed.
 Cross-process single-writer + multi-reader is gated in CI with the writer on
 either side (cgo or pure Go).
+
+## When to use this
+
+Reach for `mmkv-go` when:
+
+- You have MMKV files written by C++/Android/iOS and need to **read or write the
+  same files from Go** — sharing data across processes and languages, with no
+  format conversion.
+- Reads dominate and a `Reader` is held and reused: you want **single-digit to
+  low-tens-of-ns reads with zero allocations**, not a copy per call.
+- You want **out of cgo**: pure-Go builds, trivial cross-compilation, and
+  `go test ./...` that works out of the box.
+
+Use something else when:
+
+- You just want an embedded KV for Go and don't need MMKV format compatibility —
+  reach for [bbolt](https://github.com/etcd-io/bbolt),
+  [badger](https://github.com/dgraph-io/badger), or
+  [pebble](https://github.com/cockroachdb/pebble) instead.
+- You need **Windows** or the **Android ashmem** backend — the official cgo
+  library remains the reference there.
+- Your access pattern is open → read once → close: the parse-once cost is
+  O(file size) and won't amortize.
 
 ## Features
 
