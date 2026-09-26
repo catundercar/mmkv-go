@@ -149,7 +149,7 @@ change in any MMKV release that breaks either side turns the build red.
 
 ## Compatibility
 
-CI verifies the equivalence guarantee against the latest tag of each MMKV
+CI verifies the equivalence guarantee against the selected tag of each MMKV
 release line, on both **amd64** and **arm64** (native runners):
 
 | MMKV line | tested tag | note |
@@ -160,7 +160,7 @@ release line, on both **amd64** and **arm64** (native runners):
 | v2.1.x | `v2.1.1` | namespace |
 | v2.2.x | `v2.2.4` | |
 | v2.3.x | `v2.3.0` | AES-256 |
-| v2.4.x | `v2.4.0` | latest |
+| v2.4.x | `v2.4.1` | v2.4.2 tracking: [#2](https://github.com/catundercar/mmkv-go/issues/2) |
 
 On-disk **format versions 0–4** are supported for reading. The format has been
 stable at v4 since v1.3.0, so files from current MMKV releases read correctly; a
@@ -168,7 +168,7 @@ future format bump surfaces as `ErrUnsupportedVersion` (never silent corruption)
 and turns the CI differential red. The pure-Go **writer emits format v4**, so
 the write-direction differential is gated from v1.3 on (pre-v1.3 MMKV cannot
 read v4 files). Encryption (AES-CFB-128/256) and key expiration are
-differential-tested in both directions on `v2.4.0`; their on-disk format is
+differential-tested in both directions on `v2.4.1`; their on-disk format is
 version-stable.
 
 **Requires** Go 1.23+ and a POSIX OS (Linux/macOS).
