@@ -26,12 +26,12 @@ cd ~/project/repos/mmkv-go
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-  bash scripts/run_cell.sh v2.4.0 arm64 1s
+  bash scripts/run_cell.sh v2.4.1 arm64 1s
 '
 ```
 
 - `run_cell.sh <tag> <arch> [benchtime]`; `<arch>` only labels the result files — the real arch is set by `--platform`.
-- Output: `./results/v2.4.0-arm64.{cpp,go}.txt` (on the host, gitignored).
+- Output: `./results/v2.4.1-arm64.{cpp,go}.txt` (on the host, gitignored).
 - Side effect: clones MMKV at the tag into `./MMKV` (gitignored, regenerable); same as CI.
 
 Any gate failure (`cgo≡purego` mismatch / unit tests / `-race`) makes the script exit non-zero (CI fails on it).
@@ -46,7 +46,7 @@ cd ~/project/repos/mmkv-go
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-  for v in v1.2.16 v1.3.16 v2.0.2 v2.1.1 v2.2.4 v2.3.0 v2.4.0; do
+  for v in v1.2.16 v1.3.16 v2.0.2 v2.1.1 v2.2.4 v2.3.0 v2.4.1; do
     echo "==================== $v ===================="
     bash scripts/run_cell.sh "$v" arm64 1s
   done
@@ -65,7 +65,7 @@ Skip performance, just confirm `cgo≡purego` for a version:
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-  bash scripts/build_output.sh v2.4.0 /work/MMKV
+  bash scripts/build_output.sh v2.4.1 /work/MMKV
   cd harness && GOWORK=off GOFLAGS=-mod=mod go test -run TestCgoEqualsPurego -v ./...
 '
 ```
@@ -99,7 +99,7 @@ rm -rf MMKV results cpp/bench_cpp   # all gitignored, regenerable any time
   ```sh
   docker run --rm --platform linux/arm64 -v "$PWD":/work golang:1.23-bookworm bash -c '
     apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-    cp -r /work /scratch && cd /scratch && bash scripts/run_cell.sh v2.4.0 arm64 1s
+    cp -r /work /scratch && cd /scratch && bash scripts/run_cell.sh v2.4.1 arm64 1s
     cp -r /scratch/results /work/results   # copy results back to the host
   '
   ```

@@ -131,7 +131,7 @@ xychart-beta
 
 ## 兼容性
 
-CI 针对每条 MMKV 发布线的最新 tag、在 **amd64** 与 **arm64**(原生 runner)上
+CI 针对每条 MMKV 发布线选定的 tag、在 **amd64** 与 **arm64**(原生 runner)上
 校验等价性保证:
 
 | MMKV 线 | 测试 tag | 说明 |
@@ -142,12 +142,12 @@ CI 针对每条 MMKV 发布线的最新 tag、在 **amd64** 与 **arm64**(原生
 | v2.1.x | `v2.1.1` | namespace |
 | v2.2.x | `v2.2.4` | |
 | v2.3.x | `v2.3.0` | AES-256 |
-| v2.4.x | `v2.4.0` | 最新 |
+| v2.4.x | `v2.4.1` | v2.4.2 跟踪：[#2](https://github.com/catundercar/mmkv-go/issues/2) |
 
 读支持**磁盘格式版本 0–4**。格式自 v1.3.0 起稳定在 v4,所以当前 MMKV 版本的文件都能
 正确读取;未来格式升级会以 `ErrUnsupportedVersion` 暴露(绝不静默损坏)并让 CI 差分
 变红。纯 Go **写端输出格式 v4**,因此写方向差分自 v1.3 起受门禁(v1.3 之前的 MMKV
-读不了 v4 文件)。加密(AES-CFB-128/256)与 key 过期在 `v2.4.0` 上双向差分测试;
+读不了 v4 文件)。加密(AES-CFB-128/256)与 key 过期在 `v2.4.1` 上双向差分测试;
 其磁盘格式版本稳定。
 
 **要求** Go 1.23+ 与 POSIX 系统(Linux/macOS)。
