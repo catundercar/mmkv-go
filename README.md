@@ -149,9 +149,9 @@ on v2.4.x (`harness/`). A mismatch in a covered case turns its cell red.
 
 ## Compatibility
 
-CI targets the selected tag of each MMKV release line, on both **amd64** and
-**arm64** (native runners). The last completed native CI matrix used `v2.4.1`
-for the v2.4 line; the `v2.4.2` update has the local validation status below:
+CI verifies the selected tag of each MMKV release line on both **amd64** and
+**arm64** (native runners). The [2026-10-03 run](https://github.com/catundercar/mmkv-go/actions/runs/37100633728)
+passed all 14 matrix cells and the aggregate report, including `v2.4.2`:
 
 | MMKV line | tested tag | note |
 |---|---|---|
@@ -161,14 +161,14 @@ for the v2.4 line; the `v2.4.2` update has the local validation status below:
 | v2.1.x | `v2.1.1` | namespace |
 | v2.2.x | `v2.2.4` | |
 | v2.3.x | `v2.3.0` | AES-256 |
-| v2.4.x | `v2.4.2` | local macOS/Linux native arm64 passed; native amd64 CI pending — [validation record](doc/MMKV_V2.4.2_COMPATIBILITY.md), [#2](https://github.com/catundercar/mmkv-go/issues/2) |
+| v2.4.x | `v2.4.2` | native amd64/arm64 CI passed — [validation record](doc/MMKV_V2.4.2_COMPATIBILITY.md), [#2](https://github.com/catundercar/mmkv-go/issues/2) |
 
 On-disk **format versions 0–4** are supported for reading. The format has been
 stable at v4 since v1.3.0, so files from current MMKV releases read correctly; a
 future format bump surfaces as `ErrUnsupportedVersion` (never silent corruption)
 and turns the CI differential red. The pure-Go **writer emits format v4**, so
 the write-direction differential is gated from v1.3 on (pre-v1.3 MMKV cannot
-read v4 files). The `v2.4.2` local gates include encrypted and expiring stores.
+read v4 files). The `v2.4.2` native CI gates include encrypted and expiring stores.
 The [validation record](doc/MMKV_V2.4.2_COMPATIBILITY.md) lists the AES key widths
 and expiration cases covered in each direction, as well as cases not run.
 

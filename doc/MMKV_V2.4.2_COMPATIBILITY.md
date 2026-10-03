@@ -2,15 +2,18 @@
 
 Local validation on 2026-09-30 found no compatibility failure in the existing
 functional gates. macOS and Linux **native arm64** passed; Linux **amd64 under
-Apple Silicon emulation** also executed and passed. Native amd64 and the full
-GitHub Actions matrix remain **not run** for this change. This record does not
-mark [issue #2](https://github.com/catundercar/mmkv-go/issues/2) complete.
+Apple Silicon emulation** also executed and passed. On 2026-10-03, the full
+[native GitHub Actions matrix](https://github.com/catundercar/mmkv-go/actions/runs/37100633728)
+passed all 14 cells and the aggregate report, including v2.4.2 on native amd64
+and arm64. [PR #4](https://github.com/catundercar/mmkv-go/pull/4) remains a draft;
+[issue #2](https://github.com/catundercar/mmkv-go/issues/2) has not been updated
+or closed.
 
 ## Source and environment
 
 - mmkv-go baseline: `def2d80d19ecd6187c1fa3fe9970106cb018ffd6` (main, merged
-  [PR #3](https://github.com/catundercar/mmkv-go/pull/3)). The previous completed
-  native CI matrix tested v2.4.1; this change replaces that line's selected tag
+  [PR #3](https://github.com/catundercar/mmkv-go/pull/3)). The baseline selected
+  v2.4.1 for its v2.4 matrix entry; this change replaces that line's selected tag
   with v2.4.2, keeping the seven-version × two-architecture matrix.
 - Official MMKV: tag `v2.4.2`, commit
   `ad7657ef9d120dbcdd7432d75aa6c59391149b22`; Core and the Go binding were built
@@ -19,6 +22,8 @@ mark [issue #2](https://github.com/catundercar/mmkv-go/issues/2) complete.
 - Containers: OrbStack Linux, `golang:1.25.12-bookworm`, Go 1.25.12, GCC/G++ 12,
   CMake and zlib development package. Separate container scratch copies avoided
   sharing build outputs across operating systems or architectures.
+- Native GitHub CI: `ubuntu-latest` (Ubuntu 24.04, amd64) and
+  `ubuntu-24.04-arm` (arm64), Go 1.25.14, GCC/G++ 12, CMake and zlib.
 - The original checkout had uncommitted `harness/go.mod` and `harness/go.sum`
   changes. Validation used an independent clean copy of main; those original
   files were not modified. No checkout `AGENTS.md` or `.agents/skills` was found.
@@ -30,8 +35,9 @@ mark [issue #2](https://github.com/catundercar/mmkv-go/issues/2) complete.
 | macOS native arm64 | PASS | root unit tests; full `mmkvconfig` harness; root and full harness with `-race` |
 | Linux native arm64 | PASS | `run_cell.sh`: unit, equiv, crypt+expire, race, multiproc; C++/Go benchmark output |
 | Linux emulated amd64 | PASS (emulated) | same five gates and benchmark output; actual amd64 binaries executed |
-| GitHub native amd64 | NOT RUN | requires the updated workflow on a native runner |
-| GitHub native arm64 / full matrix / aggregate | NOT RUN | local Linux arm64 evidence does not constitute a GitHub CI run |
+| GitHub native amd64 | PASS | v2.4.2: all five gates and benchmark output |
+| GitHub native arm64 | PASS | v2.4.2: all five gates and benchmark output |
+| GitHub full matrix / aggregate | PASS | all 14 native cells and aggregate report |
 
 No executed test failed. The verbose macOS runs recorded 63 root tests and 14
 harness tests passing, with no skips, both with `-race`; the 41 plaintext
@@ -40,6 +46,18 @@ gate names. Benchmark runs used `100ms` Go samples: they verify the performance
 path executes, not a new performance claim. Emulated amd64 timings are not
 native performance evidence. Existing README performance data retains its
 v2.4.0 attribution.
+
+The native CI run tested commit `02d09f6e2c7856e4aeb0da88d859a55d29d446fc`.
+All 15 jobs completed with `success`; all 14 gate artifacts were downloaded and
+checked. The v2.4.2 artifacts contain exactly `unit`, `equiv`, `crypt+expire`,
+`race`, and `multiproc`, plus successful C++ and Go benchmark outputs. The
+[amd64 job](https://github.com/catundercar/mmkv-go/actions/runs/37100633728/job/111139304200)
+logs Go 1.25.14 `linux/amd64`; the
+[arm64 job](https://github.com/catundercar/mmkv-go/actions/runs/37100633728/job/111139304170)
+logs Go 1.25.14 `linux/arm64`, matching their native runner images. CI's race
+gate is `TestLiveReadConcurrent`; the full root/harness race results above are
+from the macOS run. The follow-up commit only records CI outcomes in
+documentation; it changes no workflow, library, harness or dependency files.
 
 The root module's tests alone do not exercise the independent cgo harness.
 `run_cell.sh` already enables `mmkvconfig` for all `v2.4.*` tags, including
@@ -124,13 +142,16 @@ build/unit/harness/race logs, `metadata.json` and generated store snapshots;
 setup commands. Go's generated harness dependency-file changes were recorded
 in `generated-harness-module.diff` and removed from this patch.
 
-## Remaining native CI steps
+Native CI evidence is under `results/ci-37100633728/`: `run.json`, `jobs.json`,
+the two v2.4.2 job logs, downloaded per-cell and `all-results` artifacts,
+`verification.txt`, and the locally regenerated `summary.md`. CI used
+`CC=gcc-12 CXX=g++-12 bash scripts/run_cell.sh <tag> <arch> 1s` for each cell.
 
-After a separately authorized push, run `mmkv-tri-test` on the branch through a
-pull request or `workflow_dispatch` selecting that branch. Require all **14**
-cells and the aggregate report to succeed, including v2.4.2 on `ubuntu-latest`
-(native amd64) and `ubuntu-24.04-arm` (native arm64). Inspect both v2.4.2 gate
-artifacts for all five names, then update the README status and issue checklist
-with the actual run URL. A post-merge main run would provide the final baseline
-evidence if merging is later authorized. No push, PR, workflow dispatch, merge,
-release or issue update was performed during this local validation.
+## Review status
+
+The verification branch was pushed and draft PR #4 created after explicit user
+authorization on 2026-10-03. Its pull-request event triggered the successful
+native matrix above. The README and this record now reflect that result.
+The issue checklist remains unchanged. Merge, release, and a post-merge main
+run remain **not performed**; merging and publishing need separate user
+authorization. The test-coverage limits listed above still apply.
