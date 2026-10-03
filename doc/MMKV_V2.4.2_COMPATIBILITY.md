@@ -47,7 +47,10 @@ path executes, not a new performance claim. Emulated amd64 timings are not
 native performance evidence. Existing README performance data retains its
 v2.4.0 attribution.
 
-The native CI run tested commit `02d09f6e2c7856e4aeb0da88d859a55d29d446fc`.
+The native CI run verified PR head
+`02d09f6e2c7856e4aeb0da88d859a55d29d446fc` by checking out GitHub's temporary
+merge commit `00605a8ae00f2ec14db1b66dd0f0b99f29cd6bd2` (`refs/pull/4/merge`)
+against the main baseline. This test ref does not mean the PR was merged.
 All 15 jobs completed with `success`; all 14 gate artifacts were downloaded and
 checked. The v2.4.2 artifacts contain exactly `unit`, `equiv`, `crypt+expire`,
 `race`, and `multiproc`, plus successful C++ and Go benchmark outputs. The
@@ -56,7 +59,7 @@ logs Go 1.25.14 `linux/amd64`; the
 [arm64 job](https://github.com/catundercar/mmkv-go/actions/runs/37100633728/job/111139304170)
 logs Go 1.25.14 `linux/arm64`, matching their native runner images. CI's race
 gate is `TestLiveReadConcurrent`; the full root/harness race results above are
-from the macOS run. The follow-up commit only records CI outcomes in
+from the macOS run. The follow-up commits only record CI outcomes in
 documentation; it changes no workflow, library, harness or dependency files.
 
 The root module's tests alone do not exercise the independent cgo harness.
