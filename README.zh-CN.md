@@ -124,15 +124,17 @@ xychart-beta
 
 ## 为什么它正确(并持续正确)
 
-最核心的保证是**与官方库的双向等价**:cgo 写入的值,经本包读回完全一致
-(`cgo.Get(k) == purego.Get(k)`);本包写入的文件,经 cgo 读回也完全一致 ——
-加密与过期存储同样如此。CI 按 MMKV 版本 × 架构强制校验两个方向(`harness/`),
-任何一个 MMKV 版本里破坏任一方向的格式变更,都会让 build 变红。
+核心保证是**与官方库等价**:cgo 写入的值,经本包读回完全一致
+(`cgo.Get(k) == purego.Get(k)`);本包写入的文件,经 cgo 读回也完全一致。
+CI 在选定 tag 上校验 C++ → Go 读取，自 v1.3 起校验明文 Go → C++ 写入，
+并在 v2.4.x 上运行[验证记录所列的加密/过期场景](doc/MMKV_V2.4.2_COMPATIBILITY.md)
+(`harness/`)。覆盖场景中出现差异即使该单元变红。
 
 ## 兼容性
 
 CI 针对每条 MMKV 发布线选定的 tag、在 **amd64** 与 **arm64**(原生 runner)上
-校验等价性保证:
+校验等价性保证。上次完整原生 CI 的 v2.4 线使用 `v2.4.1`；本次矩阵更新到
+`v2.4.2`，其本地验证状态如下：
 
 | MMKV 线 | 测试 tag | 说明 |
 |---|---|---|
@@ -142,13 +144,13 @@ CI 针对每条 MMKV 发布线选定的 tag、在 **amd64** 与 **arm64**(原生
 | v2.1.x | `v2.1.1` | namespace |
 | v2.2.x | `v2.2.4` | |
 | v2.3.x | `v2.3.0` | AES-256 |
-| v2.4.x | `v2.4.1` | v2.4.2 跟踪：[#2](https://github.com/catundercar/mmkv-go/issues/2) |
+| v2.4.x | `v2.4.2` | macOS/Linux 本地原生 arm64 已通过；原生 amd64 CI 待运行 — [验证记录](doc/MMKV_V2.4.2_COMPATIBILITY.md)、[#2](https://github.com/catundercar/mmkv-go/issues/2) |
 
 读支持**磁盘格式版本 0–4**。格式自 v1.3.0 起稳定在 v4,所以当前 MMKV 版本的文件都能
 正确读取;未来格式升级会以 `ErrUnsupportedVersion` 暴露(绝不静默损坏)并让 CI 差分
 变红。纯 Go **写端输出格式 v4**,因此写方向差分自 v1.3 起受门禁(v1.3 之前的 MMKV
-读不了 v4 文件)。加密(AES-CFB-128/256)与 key 过期在 `v2.4.1` 上双向差分测试;
-其磁盘格式版本稳定。
+读不了 v4 文件)。`v2.4.2` 本地门禁覆盖加密与过期存储；各读写方向实际覆盖的
+AES 密钥宽度、过期场景及未运行项目详见[验证记录](doc/MMKV_V2.4.2_COMPATIBILITY.md)。
 
 **要求** Go 1.23+ 与 POSIX 系统(Linux/macOS)。
 
@@ -176,8 +178,8 @@ CI 在 MMKV 各大版本线 × {amd64, arm64} 的矩阵上、于原生 runner �
 
 ```sh
 # 本地单个单元(需要 git、cmake、g++、zlib dev、Go):
-bash scripts/build_output.sh v2.4.0          # clone+build MMKV 到 ./MMKV/output
-bash scripts/run_cell.sh   v2.4.0 arm64      # 门禁 + 性能 -> results/
+bash scripts/build_output.sh v2.4.2          # clone+build MMKV 到 ./MMKV/output
+bash scripts/run_cell.sh   v2.4.2 arm64      # 门禁 + 性能 -> results/（在 arm64 主机上）
 python3 scripts/aggregate.py results         # 合并 -> markdown 报告
 ```
 

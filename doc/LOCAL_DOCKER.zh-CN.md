@@ -24,12 +24,12 @@ cd ~/project/repos/mmkv-go
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-  bash scripts/run_cell.sh v2.4.1 arm64 1s
+  bash scripts/run_cell.sh v2.4.2 arm64 1s
 '
 ```
 
 - `run_cell.sh <tag> <arch> [benchtime]`；`<arch>` 仅用于给结果文件命名，真实架构由 `--platform` 决定。
-- 产物：`./results/v2.4.1-arm64.{cpp,go}.txt`（落在宿主机，已 gitignore）。
+- 产物：`./results/v2.4.2-arm64.{cpp,go}.txt`（落在宿主机，已 gitignore）。
 - 副作用：会把 MMKV 按 tag clone 到 `./MMKV`（gitignore，可重建）；与 CI 行为一致。
 
 门禁任一失败（`cgo≡purego` 不一致 / 单测 / `-race`）→ 脚本非零退出（CI 据此 fail）。性能只出报告、不 fail。
@@ -43,7 +43,7 @@ cd ~/project/repos/mmkv-go
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-  for v in v1.2.16 v1.3.16 v2.0.2 v2.1.1 v2.2.4 v2.3.0 v2.4.1; do
+  for v in v1.2.16 v1.3.16 v2.0.2 v2.1.1 v2.2.4 v2.3.0 v2.4.2; do
     echo "==================== $v ===================="
     bash scripts/run_cell.sh "$v" arm64 1s
   done
@@ -61,7 +61,7 @@ docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-book
 docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work golang:1.23-bookworm bash -c '
   set -e
   apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-  bash scripts/build_output.sh v2.4.1 /work/MMKV
+  bash scripts/build_output.sh v2.4.2 /work/MMKV
   cd harness && GOWORK=off GOFLAGS=-mod=mod go test -run TestCgoEqualsPurego -v ./...
 '
 ```
@@ -94,7 +94,7 @@ rm -rf MMKV results cpp/bench_cpp   # 全部 gitignore，可随时重建
   ```sh
   docker run --rm --platform linux/arm64 -v "$PWD":/work golang:1.23-bookworm bash -c '
     apt-get update -qq && apt-get install -y -qq cmake zlib1g-dev
-    cp -r /work /scratch && cd /scratch && bash scripts/run_cell.sh v2.4.1 arm64 1s
+    cp -r /work /scratch && cd /scratch && bash scripts/run_cell.sh v2.4.2 arm64 1s
     cp -r /scratch/results /work/results   # 把结果拷回宿主机
   '
   ```
