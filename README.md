@@ -140,17 +140,18 @@ design, and [doc/BENCHMARK.md](doc/BENCHMARK.md) for performance.
 
 ## Why it's correct (and stays correct)
 
-The headline guarantee is **bidirectional equivalence with the official
-library**: a value written by cgo reads back identically through this package
-(`cgo.Get(k) == purego.Get(k)`), and a file written by this package reads back
-identically through cgo — including encrypted and expiring stores. CI enforces
-both directions per MMKV version × architecture (`harness/`), so a format
-change in any MMKV release that breaks either side turns the build red.
+The core guarantee is **equivalence with the official library**: values written
+by cgo read back identically through this package (`cgo.Get(k) == purego.Get(k)`),
+and files written by this package read back identically through cgo. CI gates
+C++ → Go reads across selected tags, plaintext Go → C++ writes from v1.3, and
+the [documented encryption/expiration cases](doc/MMKV_V2.4.2_COMPATIBILITY.md)
+on v2.4.x (`harness/`). A mismatch in a covered case turns its cell red.
 
 ## Compatibility
 
-CI verifies the equivalence guarantee against the selected tag of each MMKV
-release line, on both **amd64** and **arm64** (native runners):
+CI verifies the selected tag of each MMKV release line on both **amd64** and
+**arm64** (native runners). The [2026-10-03 run](https://github.com/catundercar/mmkv-go/actions/runs/37100633728)
+passed all 14 matrix cells and the aggregate report, including `v2.4.2`:
 
 | MMKV line | tested tag | note |
 |---|---|---|
@@ -160,16 +161,16 @@ release line, on both **amd64** and **arm64** (native runners):
 | v2.1.x | `v2.1.1` | namespace |
 | v2.2.x | `v2.2.4` | |
 | v2.3.x | `v2.3.0` | AES-256 |
-| v2.4.x | `v2.4.1` | v2.4.2 tracking: [#2](https://github.com/catundercar/mmkv-go/issues/2) |
+| v2.4.x | `v2.4.2` | native amd64/arm64 CI passed — [validation record](doc/MMKV_V2.4.2_COMPATIBILITY.md), [#2](https://github.com/catundercar/mmkv-go/issues/2) |
 
 On-disk **format versions 0–4** are supported for reading. The format has been
 stable at v4 since v1.3.0, so files from current MMKV releases read correctly; a
 future format bump surfaces as `ErrUnsupportedVersion` (never silent corruption)
 and turns the CI differential red. The pure-Go **writer emits format v4**, so
 the write-direction differential is gated from v1.3 on (pre-v1.3 MMKV cannot
-read v4 files). Encryption (AES-CFB-128/256) and key expiration are
-differential-tested in both directions on `v2.4.1`; their on-disk format is
-version-stable.
+read v4 files). The `v2.4.2` native CI gates include encrypted and expiring stores.
+The [validation record](doc/MMKV_V2.4.2_COMPATIBILITY.md) lists the AES key widths
+and expiration cases covered in each direction, as well as cases not run.
 
 **Requires** Go 1.23+ and a POSIX OS (Linux/macOS).
 
@@ -200,8 +201,8 @@ fail), then the three-way performance comparison (C++ / cgo / purego).
 
 ```sh
 # one cell locally (needs git, cmake, g++, zlib dev, Go):
-bash scripts/build_output.sh v2.4.0          # clone+build MMKV into ./MMKV/output
-bash scripts/run_cell.sh   v2.4.0 arm64      # gate + perf -> results/
+bash scripts/build_output.sh v2.4.2          # clone+build MMKV into ./MMKV/output
+bash scripts/run_cell.sh   v2.4.2 arm64      # gate + perf -> results/ (on an arm64 host)
 python3 scripts/aggregate.py results         # merge -> markdown report
 ```
 

@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false # 跑满矩阵，定位是哪个版本/架构出问题
       matrix:
-        version: [v1.2.16, v1.3.16, v2.0.2, v2.1.1, v2.2.4, v2.3.0, v2.4.1]
+        version: [v1.2.16, v1.3.16, v2.0.2, v2.1.1, v2.2.4, v2.3.0, v2.4.2]
         arch: [amd64, arm64]
         include:
           - arch: amd64
